@@ -139,6 +139,25 @@ def test_a_url_keeps_its_host_extension_and_well_known_words() -> None:
     assert "abc123" not in result and "cid=" in result
 
 
+def test_a_url_wrapped_in_facebooks_keeps_its_host_and_still_decodes() -> None:
+    from urllib.parse import parse_qs, urlsplit
+
+    scrubber = Scrubber(KEY)
+    inner = "https://media1.giphy.com/media/3o7TKSjRrfIPjeiVyM/giphy.gif?cid=abc123"
+    wrapped = (
+        "https://external.xx.fbcdn.net/emg1/v/t13/123456789?url="
+        + inner.replace(":", "%3A").replace("/", "%2F").replace("?", "%3F").replace("=", "%3D")
+        + "&_nc_sid=abc"
+    )
+
+    result = scrubber.string(wrapped, "uri")
+    (decoded,) = parse_qs(urlsplit(result).query)["url"]
+
+    assert decoded.startswith("https://media1.giphy.com/media/")
+    assert decoded.split("/")[4] == scrubber.token("3o7TKSjRrfIPjeiVyM")
+    assert "abc123" not in decoded
+
+
 def test_a_profile_url_loses_the_name_in_it() -> None:
     result = Scrubber(KEY).string("https://www.facebook.com/eris.discordia", "url")
 

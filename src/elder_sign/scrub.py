@@ -42,6 +42,7 @@ import re
 import secrets
 from collections.abc import Iterable, Iterator
 from typing import Any, Final
+from urllib.parse import quote, unquote
 
 TEXT_KEYS: Final = frozenset(
     {
@@ -106,6 +107,7 @@ URL_WORDS: Final = frozenset(
         "comments",
         "gif",
         "gifs",
+        "giphy",
         "graphql",
         "media",
         "photo",
@@ -114,7 +116,9 @@ URL_WORDS: Final = frozenset(
         "reel",
         "reels",
         "story",
+        "tenor",
         "v",
+        "v1",
         "video",
         "videos",
         "watch",
@@ -347,13 +351,28 @@ class Scrubber:
             stem, dot, extension = path, "", ""
 
         stem = self._tokens_in(stem, keep=URL_WORDS, words_too=True)
-        query = re.sub(
-            r"=([^&]*)",
-            lambda match: "=" + self._tokens_in(match.group(1), words_too=True),
-            query,
-        )
+        query = re.sub(r"=([^&]*)", lambda match: "=" + self._query_value(match.group(1)), query)
 
         return f"{scheme}://{host}{slash}{stem}{dot}{extension}{question}{query}"
+
+    def _query_value(
+        self,
+        value: str,
+    ) -> str:
+        """Return one query value replaced, a URL inside it scrubbed as a URL, its escapes kept.
+
+        Facebook wraps the URL of a GIF from Giphy, or of a link, in its own:
+        `https://external.xx.fbcdn.net/...?url=https%3A%2F%2Fmedia.giphy.com%2F...`.
+        The value is unescaped, scrubbed as what it is, and escaped again, so
+        the URL inside keeps its host and its escapes still decode.
+        """
+
+        unquoted = unquote(value)
+
+        if unquoted.startswith(("http://", "https://")):
+            return quote(self._url(unquoted), safe="")
+
+        return quote(self._tokens_in(unquoted, words_too=True), safe="")
 
     def string(
         self,
