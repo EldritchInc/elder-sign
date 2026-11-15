@@ -6,6 +6,7 @@ a page made to behave as Facebook's does, to prove it opens what is folded.
 """
 
 import copy
+import io
 import json
 import os
 import threading
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from PIL import Image
 
 from elder_sign.browser import BrowserSettings, Pacer, open_browser
 from elder_sign.platforms import Platform, Post
@@ -31,6 +33,7 @@ from elder_sign.platforms.facebook.reader import (
     Expansion,
     FacebookPlatform,
     PlaywrightBrowser,
+    fetchable,
     opens_comments,
 )
 from elder_sign.shared.store import Fingerprint
@@ -55,10 +58,13 @@ class ReplayingBrowser:
         pages: dict[str, list[dict[str, Any]]],
         links: list[str],
         expanded: Expansion | None = None,
+        downloads: dict[str, bytes] | None = None,
     ) -> None:
         self._pages = pages
         self._links = links
         self._expanded = expanded or Expansion()
+        self._downloads = downloads or {}
+        self.downloaded: list[str] = []
         self.visited: list[str] = []
         self.expansions = 0
         self.counts: list[int | None] = []
@@ -76,6 +82,21 @@ class ReplayingBrowser:
     def reel_links(self, url: str) -> list[str]:
         self.listed.append(url)
         return list(self._links)
+
+    def download(self, url: str) -> bytes | None:
+        self.downloaded.append(url)
+        return self._downloads.get(url)
+
+
+def gif() -> bytes:
+    """Return a two-frame GIF, red then blue."""
+
+    out = io.BytesIO()
+    red = Image.new("RGB", (40, 30), (255, 0, 0))
+    blue = Image.new("RGB", (40, 30), (0, 0, 255))
+    red.save(out, format="GIF", save_all=True, append_images=[blue], duration=100, loop=0)
+
+    return out.getvalue()
 
 
 def old_reel_page(
@@ -303,6 +324,76 @@ def test_a_scan_reads_comments_from_every_part_of_its_expansion() -> None:
     assert len(scan["comments"]) == len(comments_in(canary()))
 
 
+# Media
+
+GIPHY = "https://media2.giphy.com/media/v1.Y2lkPTc5/abc/giphy.gif"
+
+
+def test_a_gif_is_fetched_through_the_browser_and_judged_by_its_first_frame() -> None:
+    browser = ReplayingBrowser({}, [], downloads={GIPHY: gif()})
+
+    still = platform_on(browser).fetch_media({"kind": "gif", "url": GIPHY})
+
+    assert browser.downloaded == [GIPHY]
+    assert still is not None
+    assert still.media_type == "image/png"
+    assert Image.open(io.BytesIO(still.content)).format == "PNG"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://scontent-lga3-1.xx.fbcdn.net/v/t39.1997-6/sticker.png?x=1",
+        "https://media.giphy.com/media/abc/giphy.gif",
+        "https://giphy.com/abc.gif",
+        "https://media.tenor.com/abc/tenor.gif",
+        "https://lookaside.facebook.com/image?x=1",
+    ],
+)
+def test_media_is_fetched_from_facebooks_cdn_and_the_gif_services_it_embeds(
+    url: str,
+) -> None:
+    assert fetchable(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://media.giphy.com/media/abc/giphy.gif",
+        "https://evil.example/giphy.com/abc.gif",
+        "https://giphy.com.evil.example/abc.gif",
+        "https://notgiphy.com/abc.gif",
+        "file:///etc/passwd",
+        "https://127.0.0.1/abc.gif",
+    ],
+)
+def test_media_anywhere_else_is_never_fetched(
+    url: str,
+) -> None:
+    browser = ReplayingBrowser({}, [], downloads={url: gif()})
+
+    assert not fetchable(url)
+    assert platform_on(browser).fetch_media({"kind": "gif", "url": url}) is None
+    assert browser.downloaded == []
+
+
+def test_media_without_a_url_is_not_fetched() -> None:
+    browser = ReplayingBrowser({}, [])
+
+    assert platform_on(browser).fetch_media({"kind": "sticker"}) is None
+    assert platform_on(browser).fetch_media({"kind": "gif", "url": None}) is None
+    assert browser.downloaded == []
+
+
+def test_media_that_cannot_be_fetched_or_is_not_an_image_is_none() -> None:
+    other = "https://media.giphy.com/media/abc/giphy.mp4"
+    browser = ReplayingBrowser({}, [], downloads={other: b"\x00\x00\x00\x18ftypmp42"})
+    platform = platform_on(browser)
+
+    assert platform.fetch_media({"kind": "gif", "url": GIPHY}) is None
+    assert platform.fetch_media({"kind": "gif", "url": other}) is None
+
+
 # A real browser, on a page that behaves as Facebook's does
 
 
@@ -356,6 +447,18 @@ class Facebookish(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self) -> None:
+        if self.path == "/media.gif":
+            self.send_response(200)
+            self.send_header("Content-Type", "image/gif")
+            self.end_headers()
+            self.wfile.write(gif())
+            return
+
+        if self.path == "/gone.gif":
+            self.send_response(404)
+            self.end_headers()
+            return
+
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
         self.end_headers()
@@ -422,6 +525,31 @@ def test_a_real_browser_opens_the_comments_shows_all_opens_every_fold_and_finds_
     assert json.dumps(expanded.records).count("Depth1CommentsListPaginationQuery") == 1
 
 
+@pytest.mark.browser
+@pytest.mark.skipif(
+    os.environ.get("ELDER_SIGN_BROWSER_TESTS") != "1",
+    reason="opens a real browser; set ELDER_SIGN_BROWSER_TESTS=1",
+)
+def test_a_real_browser_downloads_media_and_refuses_what_is_missing_or_too_heavy(
+    tmp_path: Path,
+) -> None:
+    settings = BrowserSettings(profile=tmp_path / "profile", channel=None, headless=True)
+    pacer = Pacer(0.0, 0.0, sleep=lambda seconds: None)
+
+    with served() as root, open_browser(settings) as context:
+        browser = PlaywrightBrowser(context, pacer, settle_milliseconds=1500)
+
+        fetched = browser.download(root + "/media.gif")
+        missing = browser.download(root + "/gone.gif")
+        heavy = browser.download(root + "/media.gif", max_bytes=10)
+        unreachable = browser.download("http://127.0.0.1:9/nothing.gif")
+
+    assert fetched == gif()
+    assert missing is None
+    assert heavy is None
+    assert unreachable is None
+
+
 # The commands
 
 
@@ -429,6 +557,7 @@ def replay(
     monkeypatch: pytest.MonkeyPatch,
     page: list[dict[str, Any]],
     expansion: Expansion | None = None,
+    downloads: dict[str, bytes] | None = None,
 ) -> ReplayingBrowser:
     """Stand a browser replaying one reel's page in for Facebook, for the commands."""
 
@@ -436,7 +565,10 @@ def replay(
 
     reel = canary_reel()
     browser = ReplayingBrowser(
-        {REEL_URL.format(reel_id=reel): page}, [f"/reel/{reel}/"], expanded=expansion
+        {REEL_URL.format(reel_id=reel): page},
+        [f"/reel/{reel}/"],
+        expanded=expansion,
+        downloads=downloads,
     )
 
     @contextmanager
@@ -524,6 +656,47 @@ def test_the_scan_command_says_how_many_comments_facebook_counts_but_never_serve
     ) in printed
     assert "Facebook says: Some comments were filtered as spam." in printed
     assert "Most relevant" not in printed
+
+
+def test_the_scan_command_fetches_media_when_asked_and_keeps_it_privately(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    from elder_sign.cli import main
+
+    (url,) = [
+        str(item["url"])
+        for comment in comments_in(canary())
+        for item in comment.get("media", [])
+        if item.get("url")
+    ]
+    browser = replay(monkeypatch, canary(), downloads={url: gif()})
+    out = tmp_path / "scan.json"
+    reel = REEL_URL.format(reel_id=canary_reel())
+
+    assert main(["scan", "facebook", reel, "--out", str(out), "--media"]) == 0
+
+    printed = capsys.readouterr().out
+    kept = sorted((tmp_path / "scan-media").iterdir())
+
+    assert browser.downloaded == [url]
+    assert "Fetched 1 of 1 GIFs, stickers and images as stills" in printed
+    assert [path.suffix for path in kept] == [".png"]
+    assert oct(kept[0].stat().st_mode & 0o777) == "0o600"
+
+
+def test_the_scan_command_fetches_no_media_unless_asked(
+    replayed: ReplayingBrowser,
+    tmp_path: Path,
+) -> None:
+    from elder_sign.cli import main
+
+    reel = REEL_URL.format(reel_id=canary_reel())
+
+    assert main(["scan", "facebook", reel, "--out", str(tmp_path / "scan.json")]) == 0
+    assert replayed.downloaded == []
+    assert not (tmp_path / "scan-media").exists()
 
 
 def test_the_scan_command_refuses_a_link_that_is_not_a_reel(

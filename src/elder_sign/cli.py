@@ -156,15 +156,22 @@ def _scan(
         else None
     )
 
+    output = Path(options.out) if options.out else scans_path() / f"facebook-{reel_id}.json"
+    items = []
+    stills = []
+
     try:
         with facebook_reader.facebook(_settings(options), keep_capture=kept) as platform:
             scan = platform.scan(post)
             notices = platform.notices
+
+            if options.media:
+                items = [item for comment in scan["comments"] for item in comment.get("media", [])]
+                stills = [platform.fetch_media(item) for item in items]
     except BrowserError as exc:
         print(exc, file=sys.stderr)
         return 1
 
-    output = Path(options.out) if options.out else scans_path() / f"facebook-{reel_id}.json"
     write_private(output, json.dumps(scan, ensure_ascii=False, indent=2) + "\n")
     comments = scan["comments"]
     replies = sum(1 for comment in comments if comment["parent_id"] is not None)
@@ -185,6 +192,23 @@ def _scan(
         print(f"Facebook says: {notice}")
 
     print(f"Kept in {output}, readable by you alone: it holds real names and comments.")
+
+    if options.media:
+        folder = output.with_name(f"{output.stem}-media")
+        fetched = 0
+
+        for index, (item, still) in enumerate(zip(items, stills, strict=True), start=1):
+            if still is None:
+                continue
+
+            extension = still.media_type.removeprefix("image/").replace("jpeg", "jpg")
+            write_private_bytes(folder / f"{index:03}-{item['kind']}.{extension}", still.content)
+            fetched += 1
+
+        print(
+            f"Fetched {fetched} of {len(items)} GIFs, stickers and images as stills"
+            + (f", kept in {folder}." if fetched else ".")
+        )
 
     if kept is not None:
         print(f"Everything Facebook sent is in {kept}; scrub it before it goes anywhere.")
@@ -264,6 +288,21 @@ def write_private(
     os.chmod(path, 0o600)
 
 
+def write_private_bytes(
+    path: Path,
+    content: bytes,
+) -> None:
+    """Write a file readable and writable by its owner alone, in a folder only they can open."""
+
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(content)
+
+    os.chmod(path, 0o600)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Return the parser of every `elder-sign` command."""
 
@@ -319,6 +358,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--keep-capture",
         action="store_true",
         help="Also keep everything Facebook sent, to look into a scan that read too little.",
+    )
+    scanning.add_argument(
+        "--media",
+        action="store_true",
+        help="Also fetch every GIF, sticker and image, as the stills a model would be shown.",
     )
 
     buttons = commands.add_parser(

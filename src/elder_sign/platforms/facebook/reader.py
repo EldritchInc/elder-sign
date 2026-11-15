@@ -22,6 +22,10 @@ capture, so everything here but the clicking is proven without Facebook.
   says how many comments Facebook counts, so what was read can be checked
   against it: Facebook counts comments it never serves, such as replies
   orphaned by a deleted comment and comments of blocked accounts.
+- **Media** a comment posted, a GIF, sticker or image, is fetched through
+  the browser's own session, paced like any other look, from Facebook's CDN
+  or the GIF service it came from and nowhere else, and made a still
+  Azathoth accepts: a GIF's first frame, as a PNG.
 - **Notices** Facebook gives of comments it filtered out of view are those
   it gave while all comments were shown. The ones it gives with the reel's
   page, before all are chosen, and with "Hidden by You" describe views the
@@ -36,8 +40,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
+from urllib.parse import urlsplit
 
 from elder_sign.browser import BrowserError, BrowserSettings, Pacer, open_browser
+from elder_sign.media import still_of
 from elder_sign.platforms.base import (
     FetchedMedia,
     MediaItem,
@@ -67,6 +73,15 @@ REELS_TAB: Final = "https://www.facebook.com/profile.php?id={account}&sk=reels_t
 """The person's own reels, newest first."""
 
 REEL_URL: Final = "https://www.facebook.com/reel/{reel_id}/"
+
+MEDIA_HOSTS: Final = ("fbcdn.net", "facebook.com", "giphy.com", "tenor.com")
+"""Where a comment's media is fetched from: Facebook's CDN, and the GIF services it embeds.
+
+A host is one of these or below one, so `media2.giphy.com` is Giphy's.
+"""
+
+MAX_DOWNLOAD_BYTES: Final = 25 * 1024 * 1024
+"""The heaviest GIF or image fetched at all."""
 
 OLDER_TOLERANCE: Final = 3
 """How many reels older than the window are read before the listing stops."""
@@ -122,6 +137,26 @@ class Browser(Protocol):
     ) -> list[str]:
         """Return the links to reels on a page, in the order it shows them."""
 
+    def download(
+        self,
+        url: str,
+    ) -> bytes | None:
+        """Return what a URL holds, fetched as the signed-in person, or none when it cannot be."""
+
+
+def fetchable(
+    url: str,
+    hosts: Sequence[str] = MEDIA_HOSTS,
+) -> bool:
+    """Return whether a comment's media is fetched from a URL: over HTTPS, from a known host."""
+
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+
+    return parts.scheme == "https" and any(
+        host == known or host.endswith("." + known) for known in hosts
+    )
+
 
 class FacebookPlatform:
     """The person's own reels on Facebook, read through a browser."""
@@ -135,8 +170,10 @@ class FacebookPlatform:
         *,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         older_tolerance: int = OLDER_TOLERANCE,
+        media_hosts: Sequence[str] = MEDIA_HOSTS,
     ) -> None:
         self._browser = browser
+        self._media_hosts = media_hosts
         self._account_id = account_id
         self._now = now
         self._older_tolerance = older_tolerance
@@ -264,9 +301,21 @@ class FacebookPlatform:
         self,
         item: MediaItem,
     ) -> FetchedMedia | None:
-        """Return nothing yet: media is fetched once the browser can download it."""
+        """Return one GIF's first frame or one image, or none when it cannot be fetched.
 
-        return None
+        Nothing is fetched from a URL that is not on Facebook's CDN or a GIF
+        service it embeds, so the person's browser never fetches what a
+        stranger points it at.
+        """
+
+        url = item.get("url")
+
+        if not url or not fetchable(url, self._media_hosts):
+            return None
+
+        content = self._browser.download(url)
+
+        return still_of(content) if content is not None else None
 
 
 EXPANDERS: Final = (
@@ -612,6 +661,41 @@ class PlaywrightBrowser:
             self._settle()
 
         return links
+
+    def download(
+        self,
+        url: str,
+        *,
+        max_bytes: int = MAX_DOWNLOAD_BYTES,
+    ) -> bytes | None:
+        """Return what a URL holds, fetched with the browser's own cookies, paced, or none.
+
+        None is returned when the fetch fails, is refused, or is heavier than
+        `max_bytes`, whether its headers say so first or its body does.
+        """
+
+        from playwright.sync_api import Error as PlaywrightError
+
+        self._pacer.pause(0.3)
+
+        try:
+            response = self._page.context.request.get(url, timeout=self._settle_milliseconds * 5)
+        except PlaywrightError:
+            return None
+
+        try:
+            declared = response.headers.get("content-length", "")
+
+            if not response.ok or (declared.isdigit() and int(declared) > max_bytes):
+                return None
+
+            body = response.body()
+        except PlaywrightError:
+            return None
+        finally:
+            response.dispose()
+
+        return body if len(body) <= max_bytes else None
 
 
 NOT_SIGNED_IN: Final = "Elder Sign is not signed in to Facebook; run: elder-sign login facebook"
