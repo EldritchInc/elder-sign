@@ -73,8 +73,15 @@ class Browser(Protocol):
     ) -> Records:
         """Open a page, and return what Facebook sent for it."""
 
-    def expand(self) -> Records:
-        """Open every folded comment and reply on the open page, and return what was sent."""
+    def expand(
+        self,
+        comment_count: int | None = None,
+    ) -> Records:
+        """Open every folded comment and reply on the open page, and return what was sent.
+
+        `comment_count` is how many comments the reel has, when it is known, so
+        its own comments are opened rather than those of the next reel playing.
+        """
 
     def reel_links(
         self,
@@ -114,7 +121,7 @@ class FacebookPlatform:
         return self._browser.visit(REEL_URL.format(reel_id=reel_id))
 
     @staticmethod
-    def _details(
+    def details_of(
         reel_id: str,
         records: Records,
     ) -> PostDetails | None:
@@ -142,7 +149,7 @@ class FacebookPlatform:
 
         for reel_id in reel_ids:
             records = self._browser.visit(REEL_URL.format(reel_id=reel_id))
-            details = self._details(reel_id, records)
+            details = self.details_of(reel_id, records)
             created = details.created if details else None
 
             if created is not None and created < since:
@@ -172,7 +179,7 @@ class FacebookPlatform:
     ) -> Scan:
         """Return the comments on a reel's own post, of all a page's records hold."""
 
-        details = self._details(reel_id, records)
+        details = self.details_of(reel_id, records)
         comments = comments_in(records)
 
         if details is not None:
@@ -191,7 +198,7 @@ class FacebookPlatform:
         """Return the reel's comment count, and the newest comment its page loads with it."""
 
         records = self._visit(post.post_id)
-        details = self._details(post.post_id, records)
+        details = self.details_of(post.post_id, records)
         loaded = self._own_comments(post.post_id, records)
         newest = fingerprint_of(loaded).newest_comment_id
         count = details.comment_count if details and details.comment_count is not None else None
@@ -208,7 +215,10 @@ class FacebookPlatform:
         """Return every comment and reply on the reel, every folded one opened."""
 
         self._visits.pop(post.post_id, None)
-        records = self._browser.visit(post.url) + self._browser.expand()
+        visited = self._browser.visit(post.url)
+        details = self.details_of(post.post_id, visited)
+        count = details.comment_count if details else None
+        records = visited + self._browser.expand(count)
 
         return self._own_comments(post.post_id, records)
 
@@ -229,8 +239,25 @@ EXPANDERS: Final = (
 )
 """The names of the buttons that open folded comments and replies."""
 
-OPEN_COMMENTS: Final = re.compile(r"^(?:Comment|Comments|\d[\d,.]*K? comments?)$", re.IGNORECASE)
-"""The name of the button that opens a reel's comments, beside its like and share buttons."""
+OPEN_COMMENTS: Final = re.compile(
+    r"^(?:Comments?(?:, [\d,.]+K? comments?)?|[\d,.]+K? comments?)$", re.IGNORECASE
+)
+"""The name of the button that opens a reel's comments, beside its like and share buttons.
+
+Facebook names it with its count, `Comment, 5 comments`, and names the next
+reel playing beside it the same way, `Comment, 192 comments`.
+"""
+
+
+def opens_comments(
+    comment_count: int,
+) -> re.Pattern[str]:
+    """Return the name of the button that opens the comments of a reel with this many."""
+
+    noun = "comment" if comment_count == 1 else "comments"
+
+    return re.compile(rf"^Comments?, {comment_count:,} {noun}$", re.IGNORECASE)
+
 
 SORTING: Final = re.compile(r"^(?:Most relevant|Newest|All comments|Top comments)$", re.IGNORECASE)
 """The name of the button that chooses which comments a reel shows."""
@@ -334,10 +361,16 @@ class PlaywrightBrowser:
 
         return None
 
-    def _open_comments(self) -> None:
+    def open_comments(
+        self,
+        comment_count: int | None = None,
+    ) -> None:
         """Open the reel's comments, which its page keeps closed until they are asked for.
 
-        Comments already open are left so: the button that opens them may close them.
+        With the reel's comment count, its own button is the one named with
+        that count; failing that, or without it, the first on the page, which
+        is the reel's own. Comments already open are left so: the button that
+        opens them may close them.
         """
 
         if self._visible("button", SORTING) is not None or any(
@@ -345,7 +378,13 @@ class PlaywrightBrowser:
         ):
             return
 
-        button = self._visible("button", OPEN_COMMENTS)
+        button = None
+
+        if comment_count is not None and comment_count < 1000:
+            button = self._visible("button", opens_comments(comment_count))
+
+        if button is None:
+            button = self._visible("button", OPEN_COMMENTS)
 
         if button is None:
             return
@@ -371,11 +410,14 @@ class PlaywrightBrowser:
             self._settle()
             self._pacer.pause(0.5)
 
-    def expand(self) -> Records:
+    def expand(
+        self,
+        comment_count: int | None = None,
+    ) -> Records:
         """Open every folded comment and reply, paced, and return what was sent while doing it."""
 
         start = len(self._recorder.records)
-        self._open_comments()
+        self.open_comments(comment_count)
         self._show_all_comments()
         stale: Counter[str] = Counter()
 
@@ -402,6 +444,25 @@ class PlaywrightBrowser:
                 stale[text] += 1
 
         return self._since(start)
+
+    def button_names(self) -> list[str]:
+        """Return the name of every visible button on the open page, as a screen reader hears it.
+
+        The name is a button's `aria-label`, or else its text. This is how the
+        names `EXPANDERS`, `SORTING` and `OPEN_COMMENTS` look for are found on
+        Facebook as it is today.
+        """
+
+        names = self._page.eval_on_selector_all(
+            "[role=button], button",
+            """elements => elements
+                .filter(element => element.offsetParent !== null)
+                .map(element => (element.getAttribute('aria-label') || element.innerText || '')
+                    .trim().replace(/\\s+/g, ' '))
+                .filter(name => name)""",
+        )
+
+        return [str(name) for name in names]
 
     def reel_links(
         self,
@@ -434,6 +495,24 @@ class PlaywrightBrowser:
 
 
 NOT_SIGNED_IN: Final = "Elder Sign is not signed in to Facebook; run: elder-sign login facebook"
+
+
+@contextmanager
+def facebook_browser(
+    settings: BrowserSettings | None = None,
+    pacer: Pacer | None = None,
+) -> Iterator[PlaywrightBrowser]:
+    """Open Elder Sign's browser, signed in to Facebook, for looking at a page as it is.
+
+    Raises:
+        BrowserError: The browser cannot be opened, or is not signed in to Facebook.
+    """
+
+    with open_browser(settings) as context:
+        if signed_in_account(context) is None:
+            raise BrowserError(NOT_SIGNED_IN)
+
+        yield PlaywrightBrowser(context, pacer or Pacer())
 
 
 @contextmanager

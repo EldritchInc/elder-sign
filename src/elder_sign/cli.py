@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+from collections import Counter
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -180,6 +181,39 @@ def _scan(
     return 0
 
 
+def _buttons(
+    options: argparse.Namespace,
+) -> int:
+    """List every button a reel shows, before and after its comments are opened, by name."""
+
+    found = REEL_PATH.search(options.url)
+
+    if found is None:
+        print(f"{options.url} is not a link to a reel.", file=sys.stderr)
+        return 1
+
+    url = facebook_reader.REEL_URL.format(reel_id=found.group(1))
+
+    try:
+        with facebook_reader.facebook_browser(_settings(options)) as browser:
+            visited = browser.visit(url)
+            details = facebook_reader.FacebookPlatform.details_of(found.group(1), visited)
+            closed = browser.button_names()
+            browser.open_comments(details.comment_count if details else None)
+            opened = browser.button_names()
+    except BrowserError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+    for title, names in (("Before the comments are opened:", closed), ("After:", opened)):
+        print(title)
+
+        for name, count in Counter(names).items():
+            print(f"{count:>3}  {name}")
+
+    return 0
+
+
 def scans_path() -> Path:
     """Return where scans are kept: `~/.elder-sign/scans`."""
 
@@ -258,6 +292,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also keep everything Facebook sent, to look into a scan that read too little.",
     )
 
+    buttons = commands.add_parser(
+        "buttons",
+        help="List every button a reel shows, by name, to see how Facebook names them today.",
+    )
+    buttons.add_argument("platform", choices=PLATFORMS)
+    buttons.add_argument("url", help="The reel's link.")
+    buttons.add_argument("--hidden", action="store_true", help="Keep the browser window hidden.")
+
     return parser
 
 
@@ -284,6 +326,9 @@ def main(
 
     if options.command == "scan":
         return _scan(options)
+
+    if options.command == "buttons":
+        return _buttons(options)
 
     return 2
 

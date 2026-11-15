@@ -21,10 +21,12 @@ from elder_sign.browser import BrowserSettings, Pacer, open_browser
 from elder_sign.platforms import Platform, Post
 from elder_sign.platforms.facebook.parse import comments_in, post_id_of, posts_in
 from elder_sign.platforms.facebook.reader import (
+    OPEN_COMMENTS,
     REEL_URL,
     REELS_TAB,
     FacebookPlatform,
     PlaywrightBrowser,
+    opens_comments,
 )
 from elder_sign.shared.store import Fingerprint
 from tests.test_facebook_parse import canary
@@ -54,14 +56,16 @@ class ReplayingBrowser:
         self._expanded = expanded or []
         self.visited: list[str] = []
         self.expansions = 0
+        self.counts: list[int | None] = []
         self.listed: list[str] = []
 
     def visit(self, url: str) -> list[dict[str, Any]]:
         self.visited.append(url)
         return list(self._pages.get(url, []))
 
-    def expand(self) -> list[dict[str, Any]]:
+    def expand(self, comment_count: int | None = None) -> list[dict[str, Any]]:
         self.expansions += 1
+        self.counts.append(comment_count)
         return list(self._expanded)
 
     def reel_links(self, url: str) -> list[str]:
@@ -215,6 +219,7 @@ def test_a_scan_opens_the_reel_expands_it_and_keeps_only_its_own_comments() -> N
     scan = platform.scan(Post("facebook", reel, REEL_URL.format(reel_id=reel)))
 
     assert browser.expansions == 1
+    assert browser.counts == [5]
     assert scan["platform"] == "facebook"
     assert scan["post_id"] == reel
     assert len(scan["comments"]) == 5
@@ -227,7 +232,8 @@ def test_a_scan_opens_the_reel_expands_it_and_keeps_only_its_own_comments() -> N
 PAGE = """<html><body>
 <a href="/reel/111/">a</a> <a href="/reel/222/">b</a>
 <div id="more"></div>
-<div role="button" aria-label="Comment" id="open">💬</div>
+<div role="button" aria-label="Comment, 192 comments" id="next">💬</div>
+<div role="button" aria-label="Comment, 5 comments" id="open">💬</div>
 <div id="pane" hidden>
 <button id="sort">Most relevant</button>
 <div id="menu" hidden><div role="menuitem" id="all">All comments</div></div>
@@ -239,6 +245,7 @@ PAGE = """<html><body>
 const ask = name => fetch('/api/graphql/', {method: 'POST', headers:
   {'Content-Type': 'application/x-www-form-urlencoded'},
   body: 'fb_api_req_friendly_name=' + name + '&doc_id=1&variables=%7B%7D'});
+document.getElementById('next').onclick = () => { ask('NextReelCommentsQuery'); };
 document.getElementById('open').onclick = () => { ask('CommentsRightRailQuery');
   document.getElementById('pane').hidden = false; };
 document.getElementById('sort').onclick = () => { document.getElementById('menu').hidden = false; };
@@ -304,11 +311,14 @@ def test_a_real_browser_opens_the_comments_shows_all_opens_every_fold_and_finds_
 
         links = browser.reel_links(root + "/profile")
         visited = browser.visit(root + "/reel/111/")
-        expanded = browser.expand()
+        closed = browser.button_names()
+        expanded = browser.expand(5)
 
     names = [str(record["friendly_name"]) for record in expanded if record["kind"] == "graphql"]
 
     assert [link.rsplit("/reel/", 1)[1] for link in links] == ["111/", "222/", "333/"]
+    assert closed == ["Comment, 192 comments", "Comment, 5 comments"]
+    assert "NextReelCommentsQuery" not in names
     assert [record["kind"] for record in visited] == ["document"]
     assert names[:2] == ["CommentsRightRailQuery", "AllCommentsQuery"]
     assert sorted(names[2:]) == ["CommentsListPaginationQuery", "Depth1CommentsListPaginationQuery"]
@@ -384,3 +394,36 @@ def test_the_scan_command_refuses_a_link_that_is_not_a_reel(
 
     assert main(["scan", "facebook", "https://www.facebook.com/watch/1"]) == 1
     assert "not a link to a reel" in capsys.readouterr().err
+
+
+# Button names, as Facebook gives them
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Comment, 5 comments",
+        "Comment, 1 comment",
+        "Comment, 7.5K comments",
+        "Comment",
+        "12 comments",
+    ],
+)
+def test_the_button_that_opens_comments_is_known_by_its_name(
+    name: str,
+) -> None:
+    assert OPEN_COMMENTS.match(name)
+
+
+@pytest.mark.parametrize("name", ["Like, 7.5K reactions", "Share, 0 shares", "Comment as Eris"])
+def test_other_buttons_are_not_taken_for_it(
+    name: str,
+) -> None:
+    assert not OPEN_COMMENTS.match(name)
+
+
+def test_a_reels_own_button_is_the_one_named_with_its_count() -> None:
+    assert opens_comments(5).match("Comment, 5 comments")
+    assert not opens_comments(5).match("Comment, 192 comments")
+    assert opens_comments(1).match("Comment, 1 comment")
+    assert opens_comments(1234).match("Comment, 1,234 comments")
