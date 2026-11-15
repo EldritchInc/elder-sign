@@ -455,11 +455,16 @@ ALL_COMMENTS: Final = re.compile(r"^All comments\b", re.IGNORECASE)
 """The choice that shows every comment, rather than only those Facebook ranks highest."""
 
 COMMENT_MENU: Final = re.compile(
-    r"^(?:Edit or delete this|Hide or report this|Remove or report this|"
+    r"^(?:Edit or delete this|Delete, hide or report this|Hide or report this|"
+    r"Remove or report this|"
     r"Edit, delete or hide this|More options(?: for this comment)?|Actions for this comment)$",
     re.IGNORECASE,
 )
-"""The name of the "…" button that opens one comment's menu."""
+"""The name of the "…" button that opens one comment's menu.
+
+On her own comments Facebook names it "Edit or delete this"; on others' comments
+on her post, "Delete, hide or report this".
+"""
 
 MENU_ITEMS: Final = {
     "delete": re.compile(r"^Delete(?: comment)?$", re.IGNORECASE),
@@ -787,19 +792,23 @@ class PlaywrightBrowser:
     def _what_is_shown(self) -> str:
         """Say how many comments the page shows, how many lack a permalink, how many are hidden."""
 
-        shown: dict[str, int] = self._page.evaluate(
+        shown: dict[str, Any] = self._page.evaluate(
             """() => {
                 const articles = [...document.querySelectorAll('[role=article]')];
                 const linked = articles.filter(a => a.querySelector("a[href*='comment_id=']"));
                 const hidden = articles.filter(a => /This comment was hidden/i.test(a.innerText));
+                const numbers = hidden.map(a => [...a.querySelectorAll("a[href*='comment_id=']")]
+                    .map(link => (link.href.match(/(?:reply_)?comment_id=\\d+/g) || []).join("+"))
+                    .join(" ")).filter(found => found).slice(0, 10);
                 return {shown: articles.length, unlinked: articles.length - linked.length,
-                        hidden: hidden.length};
+                        hidden: hidden.length, numbers: numbers};
             }"""
         )
+        numbers = ", ".join(str(number) for number in shown["numbers"]) or "none"
 
         return (
             f"{shown['shown']} comments shown, {shown['unlinked']} without a permalink, "
-            f"{shown['hidden']} reading 'This comment was hidden'"
+            f"{shown['hidden']} reading 'This comment was hidden' (linked as: {numbers})"
         )
 
     @staticmethod

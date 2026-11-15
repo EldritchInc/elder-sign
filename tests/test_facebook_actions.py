@@ -65,7 +65,15 @@ PAGE = f"""<html><body>
 <span class="text">someone else's</span> <a href="/reel/1/?comment_id=104">4h</a>
 <div role="button">Reply</div><div role="button" aria-label="Some new name">…</div>
 </div>
+<div role="article" id="c106" aria-label="Comment">
+<span class="text">not hers</span> <a href="/reel/1/?comment_id=106">5h</a>
+<div role="button">Reply</div>
+<div role="button" class="menu" aria-label="Delete, hide or report this">…</div>
+</div>
 <div role="article" id="c105" aria-label="Comment">This comment was hidden.
+<a href="/reel/1/?comment_id=105&reply_comment_id=305">6h</a>
+<div role="button" class="unhide">Unhide</div></div>
+<div role="article" id="c107" aria-label="Comment">This comment was hidden.
 <div role="button" class="unhide">Unhide</div></div>
 <div role="article" id="c103" aria-label="Comment" data-hidden="1">
 <span class="text">hidden one</span> <a href="/reel/1/?comment_id=103">3h</a>
@@ -161,7 +169,9 @@ def test_hiding_uses_the_button_under_that_comment_alone(
         "c102": "0",
         "c202": "0",
         "c104": "0",
+        "c106": "0",
         "c105": "0",
+        "c107": "0",
         "c103": "1",
     }
 
@@ -239,4 +249,16 @@ def test_a_comment_not_found_says_what_the_page_shows(
         browser.act(comment_id("999"), "unhide")
 
     assert "1 without a permalink" in str(raised.value)
-    assert "1 reading 'This comment was hidden'" in str(raised.value)
+    assert "2 reading 'This comment was hidden'" in str(raised.value)
+    assert "linked as: comment_id=105+reply_comment_id=305" in str(raised.value)
+
+
+def test_another_persons_comment_is_deleted_through_its_own_menu_name(
+    tmp_path: Path,
+) -> None:
+    with opened(tmp_path) as (browser, page):
+        menu = browser.act(comment_id("106"), "delete")
+        after = state(page)
+
+    assert menu == ("Delete", "Hide comment", "Report comment")
+    assert "c106" not in after
