@@ -227,15 +227,20 @@ def test_a_scan_opens_the_reel_expands_it_and_keeps_only_its_own_comments() -> N
 PAGE = """<html><body>
 <a href="/reel/111/">a</a> <a href="/reel/222/">b</a>
 <div id="more"></div>
+<div role="button" aria-label="Comment" id="open">💬</div>
+<div id="pane" hidden>
 <button id="sort">Most relevant</button>
 <div id="menu" hidden><div role="menuitem" id="all">All comments</div></div>
 <div role="button" id="replies">View 1 reply</div>
 <div role="button" id="comments">View more comments</div>
 <div role="button" id="dead">View 2 replies</div>
+</div>
 <script>
 const ask = name => fetch('/api/graphql/', {method: 'POST', headers:
   {'Content-Type': 'application/x-www-form-urlencoded'},
   body: 'fb_api_req_friendly_name=' + name + '&doc_id=1&variables=%7B%7D'});
+document.getElementById('open').onclick = () => { ask('CommentsRightRailQuery');
+  document.getElementById('pane').hidden = false; };
 document.getElementById('sort').onclick = () => { document.getElementById('menu').hidden = false; };
 document.getElementById('all').onclick = () => { ask('AllCommentsQuery');
   document.getElementById('menu').hidden = true; };
@@ -288,7 +293,7 @@ def served() -> Iterator[str]:
     os.environ.get("ELDER_SIGN_BROWSER_TESTS") != "1",
     reason="opens a real browser; set ELDER_SIGN_BROWSER_TESTS=1",
 )
-def test_a_real_browser_shows_all_comments_opens_every_fold_and_finds_every_reel(
+def test_a_real_browser_opens_the_comments_shows_all_opens_every_fold_and_finds_every_reel(
     tmp_path: Path,
 ) -> None:
     settings = BrowserSettings(profile=tmp_path / "profile", channel=None, headless=True)
@@ -305,8 +310,8 @@ def test_a_real_browser_shows_all_comments_opens_every_fold_and_finds_every_reel
 
     assert [link.rsplit("/reel/", 1)[1] for link in links] == ["111/", "222/", "333/"]
     assert [record["kind"] for record in visited] == ["document"]
-    assert names[0] == "AllCommentsQuery"
-    assert sorted(names[1:]) == ["CommentsListPaginationQuery", "Depth1CommentsListPaginationQuery"]
+    assert names[:2] == ["CommentsRightRailQuery", "AllCommentsQuery"]
+    assert sorted(names[2:]) == ["CommentsListPaginationQuery", "Depth1CommentsListPaginationQuery"]
     assert json.dumps(expanded).count("Depth1CommentsListPaginationQuery") == 1
 
 
@@ -325,7 +330,9 @@ def replayed(
     browser = ReplayingBrowser({REEL_URL.format(reel_id=reel): canary()}, [f"/reel/{reel}/"])
 
     @contextmanager
-    def facebook(settings: Any = None, pacer: Any = None) -> Iterator[FacebookPlatform]:
+    def facebook(
+        settings: Any = None, pacer: Any = None, **options: Any
+    ) -> Iterator[FacebookPlatform]:
         yield platform_on(browser)
 
     monkeypatch.setattr(reader, "facebook", facebook)
@@ -364,6 +371,7 @@ def test_the_scan_command_keeps_what_it_read_where_only_its_owner_can_read_it(
     scan = json.loads(out.read_text())
 
     assert "Read 5 comments" in printed
+    assert "Everything Facebook sent" not in printed
     assert "4 top-level, 1 replies, 1 with a GIF" in printed
     assert len(scan["comments"]) == 5
     assert oct(out.stat().st_mode & 0o777) == "0o600"

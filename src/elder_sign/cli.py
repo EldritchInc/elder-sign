@@ -149,8 +149,14 @@ def _scan(
         platform="facebook", post_id=reel_id, url=facebook_reader.REEL_URL.format(reel_id=reel_id)
     )
 
+    kept = (
+        facebook_capture.captures_path() / f"facebook-scan-{reel_id}.jsonl"
+        if options.keep_capture
+        else None
+    )
+
     try:
-        with facebook_reader.facebook(_settings(options)) as platform:
+        with facebook_reader.facebook(_settings(options), keep_capture=kept) as platform:
             scan = platform.scan(post)
     except BrowserError as exc:
         print(exc, file=sys.stderr)
@@ -167,6 +173,9 @@ def _scan(
         f"{replies} replies, {media} with a GIF, sticker or image."
     )
     print(f"Kept in {output}, readable by you alone: it holds real names and comments.")
+
+    if kept is not None:
+        print(f"Everything Facebook sent is in {kept}; scrub it before it goes anywhere.")
 
     return 0
 
@@ -243,6 +252,11 @@ def build_parser() -> argparse.ArgumentParser:
     scanning.add_argument("url", help="The reel's link.")
     scanning.add_argument("--out", help="Where to keep the comments read.")
     scanning.add_argument("--hidden", action="store_true", help="Keep the browser window hidden.")
+    scanning.add_argument(
+        "--keep-capture",
+        action="store_true",
+        help="Also keep everything Facebook sent, to look into a scan that read too little.",
+    )
 
     return parser
 

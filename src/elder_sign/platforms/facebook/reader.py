@@ -25,6 +25,7 @@ from collections import Counter
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
 
 from elder_sign.browser import BrowserError, BrowserSettings, Pacer, open_browser
@@ -228,6 +229,9 @@ EXPANDERS: Final = (
 )
 """The names of the buttons that open folded comments and replies."""
 
+OPEN_COMMENTS: Final = re.compile(r"^(?:Comment|Comments|\d[\d,.]*K? comments?)$", re.IGNORECASE)
+"""The name of the button that opens a reel's comments, beside its like and share buttons."""
+
 SORTING: Final = re.compile(r"^(?:Most relevant|Newest|All comments|Top comments)$", re.IGNORECASE)
 """The name of the button that chooses which comments a reel shows."""
 
@@ -250,6 +254,12 @@ class PlaywrightBrowser:
     Buttons are found by their accessible names, as a screen reader finds
     them, not by Facebook's markup, which changes from week to week.
     """
+
+    @property
+    def records(self) -> Records:
+        """Every response recorded since the browser was opened."""
+
+        return self._recorder.records
 
     def __init__(
         self,
@@ -324,6 +334,26 @@ class PlaywrightBrowser:
 
         return None
 
+    def _open_comments(self) -> None:
+        """Open the reel's comments, which its page keeps closed until they are asked for.
+
+        Comments already open are left so: the button that opens them may close them.
+        """
+
+        if self._visible("button", SORTING) is not None or any(
+            self._visible("button", pattern) is not None for pattern in EXPANDERS
+        ):
+            return
+
+        button = self._visible("button", OPEN_COMMENTS)
+
+        if button is None:
+            return
+
+        button.click()
+        self._settle()
+        self._pacer.pause(0.6)
+
     def _show_all_comments(self) -> None:
         """Choose to see every comment, when the reel offers the choice."""
 
@@ -345,6 +375,7 @@ class PlaywrightBrowser:
         """Open every folded comment and reply, paced, and return what was sent while doing it."""
 
         start = len(self._recorder.records)
+        self._open_comments()
         self._show_all_comments()
         stale: Counter[str] = Counter()
 
@@ -409,8 +440,14 @@ NOT_SIGNED_IN: Final = "Elder Sign is not signed in to Facebook; run: elder-sign
 def facebook(
     settings: BrowserSettings | None = None,
     pacer: Pacer | None = None,
+    *,
+    keep_capture: Path | None = None,
 ) -> Iterator[FacebookPlatform]:
     """Open Facebook in Elder Sign's browser, as the account it is signed in to.
+
+    With `keep_capture`, everything Facebook sent is kept there too, as
+    `elder-sign capture` keeps it, readable by its owner alone, so a run that
+    reads less than it should can be looked into.
 
     Raises:
         BrowserError: The browser cannot be opened, or is not signed in to Facebook.
@@ -422,4 +459,12 @@ def facebook(
         if account is None:
             raise BrowserError(NOT_SIGNED_IN)
 
-        yield FacebookPlatform(PlaywrightBrowser(context, pacer or Pacer()), account)
+        browser = PlaywrightBrowser(context, pacer or Pacer())
+
+        try:
+            yield FacebookPlatform(browser, account)
+        finally:
+            if keep_capture is not None:
+                kept = Recorder()
+                kept.records = list(browser.records)
+                kept.write(keep_capture)
