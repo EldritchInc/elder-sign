@@ -98,6 +98,12 @@ class Platform(Protocol):
     name: str
     """The platform's name, as scans and the state file record it: `facebook`."""
 
+    account_id: str | None
+    """The person's own account, as the platform names its authors, when it is known.
+
+    Their own comments are always trusted: never judged, never acted on.
+    """
+
     def recent_posts(
         self,
         days: int,

@@ -150,6 +150,10 @@ def test_the_adapter_is_a_platform() -> None:
     assert isinstance(platform_on(ReplayingBrowser({}, [])), Platform)
 
 
+def test_the_adapter_says_which_account_it_is_signed_in_as() -> None:
+    assert platform_on(ReplayingBrowser({}, [])).account_id == "382532529"
+
+
 def test_recent_reels_are_listed_from_the_persons_own_reels_tab() -> None:
     reel = canary_reel()
     browser = ReplayingBrowser({REEL_URL.format(reel_id=reel): canary()}, [f"/reel/{reel}/"])

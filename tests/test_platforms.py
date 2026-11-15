@@ -46,6 +46,11 @@ def test_the_fake_is_a_platform() -> None:
     assert isinstance(FakePlatform(), Platform)
 
 
+def test_the_fake_is_signed_in_as_the_account_it_is_given() -> None:
+    assert FakePlatform().account_id is None
+    assert FakePlatform(account_id="me").account_id == "me"
+
+
 def test_a_scan_in_the_workflows_shape_is_valid() -> None:
     scan = {
         "platform": "facebook",

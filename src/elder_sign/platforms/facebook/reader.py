@@ -175,6 +175,8 @@ class FacebookPlatform:
         self._browser = browser
         self._media_hosts = media_hosts
         self._account_id = account_id
+        self.account_id: str | None = account_id
+        """The account Elder Sign's browser is signed in to Facebook as: the person's own."""
         self._now = now
         self._older_tolerance = older_tolerance
         self._visits: dict[str, Records] = {}

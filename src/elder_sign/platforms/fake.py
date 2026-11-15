@@ -29,8 +29,10 @@ class FakePlatform:
         name: str = "facebook",
         *,
         now: datetime | None = None,
+        account_id: str | None = None,
     ) -> None:
         self.name = name
+        self.account_id = account_id
         self.calls: Counter[str] = Counter()
         self._now = now or datetime.now(UTC)
         self._posts: dict[str, Post] = {}

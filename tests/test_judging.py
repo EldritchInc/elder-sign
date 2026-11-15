@@ -39,7 +39,9 @@ from elder_sign.shared.store import (
     DATABASE_ENVIRONMENT_VARIABLE,
     connect,
     read_description,
+    read_standing,
     write_flag,
+    write_standing,
 )
 from tests.test_media_judging import JUDGMENT, VISION, cli, png
 from tests.test_moderate_scan import CLASSIFY_COMMENT_ID, WORKFLOWS, stand_in_child
@@ -138,19 +140,40 @@ class ScriptedRunner:
         return [workflow_id for workflow_id, _ in self.calls]
 
 
-def platform_with_gif() -> FakePlatform:
+def platform_with_gif(
+    account_id: str | None = None,
+) -> FakePlatform:
     """Return a platform that serves the GIF's still and nothing for the gone one."""
 
-    platform = FakePlatform()
+    platform = FakePlatform(account_id=account_id)
     platform.add_media(GIF, png())
 
     return platform
 
 
+@pytest.fixture
+def state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> Iterator[sqlite3.Connection]:
+    """Give judging a fresh state file, and the test a connection to it."""
+
+    path = tmp_path / "elder-sign.db"
+    monkeypatch.setenv(DATABASE_ENVIRONMENT_VARIABLE, str(path))
+    connection = connect(path)
+
+    try:
+        yield connection
+    finally:
+        connection.close()
+
+
 # The steps
 
 
-def test_a_scan_with_nothing_new_to_describe_is_resolved_then_judged_whole() -> None:
+def test_a_scan_with_nothing_new_to_describe_is_resolved_then_judged_whole(
+    state: sqlite3.Connection,
+) -> None:
     runner = ScriptedRunner()
     scan = scan_of([comment("c1", "a", "hi"), comment("c2", "b", "yo", parent="c1")])
 
@@ -163,7 +186,9 @@ def test_a_scan_with_nothing_new_to_describe_is_resolved_then_judged_whole() -> 
     assert judgment.counts() == {"hostile": 2, "friendly": 0, "uncertain": 0}
 
 
-def test_new_media_is_fetched_described_and_kept_before_the_words_are_judged() -> None:
+def test_new_media_is_fetched_described_and_kept_before_the_words_are_judged(
+    state: sqlite3.Connection,
+) -> None:
     runner = ScriptedRunner([{"media_key": GIF_KEY, "kind": "gif", "url": GIF}])
     scan = scan_of([comment("c1", "troll", None, media=GIF)])
 
@@ -185,7 +210,9 @@ def test_new_media_is_fetched_described_and_kept_before_the_words_are_judged() -
     assert judgment.held == ()
 
 
-def test_comments_whose_media_or_parents_media_cannot_be_fetched_are_held() -> None:
+def test_comments_whose_media_or_parents_media_cannot_be_fetched_are_held(
+    state: sqlite3.Connection,
+) -> None:
     runner = ScriptedRunner([{"media_key": GONE_KEY, "kind": "gif", "url": GONE}])
     scan = scan_of(
         [
@@ -203,7 +230,9 @@ def test_comments_whose_media_or_parents_media_cannot_be_fetched_are_held() -> N
     assert judgment.undescribed == (GONE_KEY,)
 
 
-def test_media_a_model_cannot_describe_holds_its_comments_and_the_rest_are_judged() -> None:
+def test_media_a_model_cannot_describe_holds_its_comments_and_the_rest_are_judged(
+    state: sqlite3.Connection,
+) -> None:
     runner = ScriptedRunner([{"media_key": GIF_KEY, "kind": "gif", "url": GIF}], judge_fails=True)
     scan = scan_of([comment("c1", "troll", None, media=GIF), comment("c2", "friend", "hi")])
 
@@ -229,7 +258,9 @@ def test_only_the_comments_with_undescribed_media_or_such_a_parent_are_held_back
     assert held_back(scan, set()) == []
 
 
-def test_a_failing_moderate_scan_is_raised() -> None:
+def test_a_failing_moderate_scan_is_raised(
+    state: sqlite3.Connection,
+) -> None:
     class Failing(ScriptedRunner):
         def run(self, workflow_id: str, payload: Any = None, **options: Any) -> Any:
             if workflow_id == MODERATE_SCAN_ID:
@@ -239,6 +270,37 @@ def test_a_failing_moderate_scan_is_raised() -> None:
 
     with pytest.raises(WorkflowError, match="moderate-scan"):
         judge(scan_of([comment("c1", "a", "hi")]), platform_with_gif(), Failing())
+
+
+# The person's own account
+
+
+def test_the_signed_in_account_is_trusted_before_anything_is_judged(
+    state: sqlite3.Connection,
+) -> None:
+    runner = ScriptedRunner()
+
+    judge(scan_of([comment("c1", "me", "my answer")]), platform_with_gif("me"), runner)
+
+    assert read_standing(state, "facebook", "me") == "trusted"
+
+
+def test_the_signed_in_account_is_trusted_even_if_it_was_once_blocked(
+    state: sqlite3.Connection,
+) -> None:
+    write_standing(state, "facebook", "me", "blocked")
+
+    judge(scan_of([comment("c1", "me", "hi")]), platform_with_gif("me"), ScriptedRunner())
+
+    assert read_standing(state, "facebook", "me") == "trusted"
+
+
+def test_a_platform_signed_in_as_no_one_trusts_no_one(
+    state: sqlite3.Connection,
+) -> None:
+    judge(scan_of([comment("c1", "a", "hi")]), platform_with_gif(), ScriptedRunner())
+
+    assert state.execute("SELECT COUNT(*) FROM authors").fetchone() == (0,)
 
 
 # Through Azathoth itself
@@ -317,6 +379,23 @@ def verdicts(
         entry["comment_id"]: (entry["verdict"], entry["layer"])
         for entry in judgment.outcome["verdicts"]
     }
+
+
+def test_the_persons_own_comments_never_reach_a_model(
+    installed: sqlite3.Connection,
+) -> None:
+    mine = [
+        comment("c1", "troll-1", "you will never be a woman"),
+        comment("c2", "me", "I am a woman, and this is my reel", parent="c1"),
+    ]
+
+    judgment = judge(scan_of(mine), platform_with_gif("me"), AzathothRunner())
+
+    assert verdicts(judgment) == {
+        "c1": ("hostile", "model"),
+        "c2": ("friendly", "trusted_author"),
+    }
+    assert judgment.outcome["model"]["groups"] == 1
 
 
 def test_a_scan_is_judged_through_azathoth_its_gif_described_once(

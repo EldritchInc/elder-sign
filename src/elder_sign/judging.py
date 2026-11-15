@@ -10,6 +10,10 @@ A scan is judged in three steps, each an Azathoth workflow:
 3. `moderate-scan` gives every comment its verdict, words judged beside the
    descriptions of their media, and remembers what a model decided.
 
+Before any of it, the person's own account is trusted, so their own
+comments, their answers to trolls among them, never reach a model and are
+never acted on.
+
 A comment whose media, or whose parent's media, could not be described is
 **held** for the next run rather than judged: judged without what it posts,
 a GIF reply would be remembered as harmless forever. Judging changes nothing
@@ -28,6 +32,7 @@ from typing import Any, Final, Protocol
 
 from elder_sign.platforms.base import Comment, MediaItem, Platform, Scan
 from elder_sign.shared.keys import media_key
+from elder_sign.shared.store import connect, write_standing
 
 RESOLVE_COMMENTS_ID: Final = "e1de7516-0000-4000-8000-000000000100"
 
@@ -36,6 +41,9 @@ JUDGE_MEDIA_ID: Final = "e1de7516-0000-4000-8000-000000000200"
 RECORD_MEDIA_ID: Final = "e1de7516-0000-4000-8000-000000000210"
 
 MODERATE_SCAN_ID: Final = "e1de7516-0000-4000-8000-000000000400"
+
+OWN_ACCOUNT: Final = "your own account"
+"""The note the person's own account is trusted with."""
 
 WORKFLOW_NAMES: Final = {
     RESOLVE_COMMENTS_ID: "resolve-comments",
@@ -202,6 +210,22 @@ def _describe(
     return isinstance(recorded, dict) and recorded.get("described") is True
 
 
+def trust_own_account(
+    platform: Platform,
+) -> None:
+    """Trust the account the platform is signed in as, whatever its standing was."""
+
+    if not platform.account_id:
+        return
+
+    connection = connect()
+
+    try:
+        write_standing(connection, platform.name, platform.account_id, "trusted", OWN_ACCOUNT)
+    finally:
+        connection.close()
+
+
 def judge(
     scan: Scan,
     platform: Platform,
@@ -209,10 +233,13 @@ def judge(
 ) -> Judgment:
     """Judge every comment of a scan, describing its new media first; change nothing on it.
 
+    The person's own account is trusted first, so their own comments are never judged.
+
     Raises:
         WorkflowError: `resolve-comments` or `moderate-scan` could not be run.
     """
 
+    trust_own_account(platform)
     resolution = runner.run(RESOLVE_COMMENTS_ID, scan)
     pending: list[dict[str, Any]] = list(resolution.get("undescribed_media", []))
     undescribed: set[str] = set()
