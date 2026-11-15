@@ -123,8 +123,12 @@ def install(
     *,
     models: tuple[ModelMetadata, ...],
     reply: Any = JUDGMENT,
+    replies: dict[str, Any] | None = None,
 ) -> None:
-    """Install Elder Sign into a fresh Azathoth whose only models reply as scripted."""
+    """Install Elder Sign into a fresh Azathoth whose only models reply as scripted.
+
+    Every model gives `reply`, but those named in `replies`, by identifier.
+    """
 
     monkeypatch.setenv(AZATHOTH_DATABASE, str(tmp_path / "azathoth.db"))
     monkeypatch.delenv("AZATHOTH_CONTENT_STORE", raising=False)
@@ -133,14 +137,22 @@ def install(
         cli_bootstrap, "_load_current_models", lambda _configuration: ModelCatalog(models=models)
     )
     scripted = models
-    response_text = reply if isinstance(reply, str) else json.dumps(reply)
+
+    def text(answer: Any) -> str:
+        return answer if isinstance(answer, str) else json.dumps(answer)
+
+    answers = {
+        model.identifier: text((replies or {}).get(model.identifier, reply)) for model in models
+    }
     monkeypatch.setattr(
         cli_bootstrap,
         "_load_language_models",
         lambda *, configuration, models: LanguageModelRegistry(
             {
                 model.identifier: DeterministicLanguageModel(
-                    provider=model.provider, model=model.model, response_text=response_text
+                    provider=model.provider,
+                    model=model.model,
+                    response_text=answers[model.identifier],
                 )
                 for model in scripted
             }

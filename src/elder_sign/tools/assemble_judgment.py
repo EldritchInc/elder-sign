@@ -25,6 +25,12 @@ to the safest reading that still acts:
 - a reason is kept only as text, cut to `MAXIMUM_REASON_LENGTH` characters.
 
 `valid` says whether the model's answer held a verdict it could be taken at.
+
+`escalate` says whether a stronger model should look again before the verdict
+stands: when the answer is uncertain, or unreadable, or hostile only in its
+context, which is where an ally answering a troll is mistaken for one. A
+judgment `escalated` from a stronger model is marked so, and is never
+escalated again.
 """
 
 import json
@@ -35,11 +41,11 @@ from elder_sign.shared.protocol import JsonObject
 
 TOOL_ID: Final = "e1de7516-0000-4000-8000-000000000080"
 
-IMPLEMENTATION_ID: Final = "e1de7516-0000-4000-8000-000000000081"
+IMPLEMENTATION_ID: Final = "e1de7516-0000-4000-8000-000000000082"
 
 NAME: Final = "assemble_judgment"
 
-VERSION: Final = "1.0.0"
+VERSION: Final = "1.1.0"
 
 DESCRIPTION: Final = (
     "Check a model's judgment of one group of comments, reading anything malformed as "
@@ -72,6 +78,7 @@ INPUT_SCHEMA: Final[JsonObject] = {
         },
         "judgment": {},
         "model": {"type": ["string", "null"]},
+        "escalated": {"type": "boolean"},
     },
     "required": ["group", "judgment"],
 }
@@ -92,6 +99,7 @@ OUTPUT_SCHEMA: Final[JsonObject] = {
                 "model": {"type": ["string", "null"]},
                 "reason": {"type": ["string", "null"]},
                 "valid": {"type": "boolean"},
+                "escalated": {"type": "boolean"},
             },
             "required": [
                 "content_key",
@@ -104,10 +112,12 @@ OUTPUT_SCHEMA: Final[JsonObject] = {
                 "model",
                 "reason",
                 "valid",
+                "escalated",
             ],
-        }
+        },
+        "escalate": {"type": "boolean"},
     },
-    "required": ["judged"],
+    "required": ["judged", "escalate"],
 }
 
 GROUP: Final[JsonObject] = {
@@ -134,7 +144,9 @@ TEST_CASES: Final = (
                 "model": None,
                 "reason": None,
                 "valid": True,
-            }
+                "escalated": False,
+            },
+            "escalate": False,
         },
     ),
     (
@@ -158,7 +170,9 @@ TEST_CASES: Final = (
                 "model": None,
                 "reason": "questions that she is a woman",
                 "valid": True,
-            }
+                "escalated": False,
+            },
+            "escalate": False,
         },
     ),
     (
@@ -174,7 +188,27 @@ TEST_CASES: Final = (
                 "model": None,
                 "reason": UNREADABLE,
                 "valid": False,
-            }
+                "escalated": False,
+            },
+            "escalate": True,
+        },
+    ),
+    (
+        "never escalates a stronger model's judgment",
+        "A judgment escalated once stands, uncertain or not.",
+        {"group": GROUP, "judgment": {"verdict": "uncertain"}, "escalated": True},
+        {
+            "judged": {
+                **GROUP,
+                "verdict": "uncertain",
+                "context_independent": False,
+                "media_hostile": False,
+                "model": None,
+                "reason": None,
+                "valid": True,
+                "escalated": True,
+            },
+            "escalate": False,
         },
     ),
 )
@@ -238,6 +272,7 @@ def run(
     group: JsonObject = inputs["group"]
     judgment = parsed(inputs["judgment"])
     model = inputs.get("model")
+    escalated = inputs.get("escalated") is True
     media_keys = [str(key) for key in group.get("media_keys") or ()]
     verdict = _verdict(judgment)
 
@@ -258,16 +293,19 @@ def run(
                 "media_hostile": False,
                 "reason": UNREADABLE,
                 "valid": False,
-            }
+                "escalated": escalated,
+            },
+            "escalate": not escalated,
         }
 
     reason = judgment.get("reason")
+    context_independent = judgment.get("context_independent") is True
 
     return {
         "judged": {
             **joined,
             "verdict": verdict,
-            "context_independent": judgment.get("context_independent") is True,
+            "context_independent": context_independent,
             "media_hostile": judgment.get("media_hostile") is True
             and verdict == "hostile"
             and bool(media_keys),
@@ -275,5 +313,8 @@ def run(
             if isinstance(reason, str)
             else None,
             "valid": True,
-        }
+            "escalated": escalated,
+        },
+        "escalate": not escalated
+        and (verdict == "uncertain" or (verdict == "hostile" and not context_independent)),
     }

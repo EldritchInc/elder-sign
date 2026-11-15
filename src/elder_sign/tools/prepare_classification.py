@@ -8,9 +8,11 @@ The input is what `map_workflow` gives each child, one group of
 The output is the text a prompt places, and the group itself, passed on
 unchanged for `assemble_judgment`:
 
-- `comment`: the comment's words, quoted as a JSON string so nothing in them
-  can pass for the prompt's own words, then each GIF or image as its
-  description: `"lol exactly" [GIF: a clown honking a horn]`;
+- `comment`: who wrote the comment, then its words, quoted as a JSON string
+  so nothing in them can pass for the prompt's own words, then each GIF or
+  image as its description: `"Kim" wrote: "lol exactly" [GIF: a clown]`.
+  Replies often begin with the name of the person they answer, so naming
+  who wrote what shows an ally answering a troll for what it is;
 - `thread`: what her post says, quoted, when it is known; then what the
   comment replies to: the post itself, another comment written the same
   way, saying so when she wrote it herself, or a comment that can no longer
@@ -27,11 +29,11 @@ from elder_sign.shared.protocol import JsonObject
 
 TOOL_ID: Final = "e1de7516-0000-4000-8000-000000000070"
 
-IMPLEMENTATION_ID: Final = "e1de7516-0000-4000-8000-000000000072"
+IMPLEMENTATION_ID: Final = "e1de7516-0000-4000-8000-000000000073"
 
 NAME: Final = "prepare_classification"
 
-VERSION: Final = "1.1.0"
+VERSION: Final = "1.2.0"
 
 DESCRIPTION: Final = (
     "Write one group of comments as a model is shown it: the comment's words, quoted, with "
@@ -128,10 +130,14 @@ def quoted(
 def written(
     comment: JsonObject,
 ) -> str:
-    """Return a comment as a model reads it: its quoted words, then its media."""
+    """Return a comment as a model reads it: who wrote it, its quoted words, then its media."""
 
     parts: list[str] = []
+    author = str(comment.get("author_name") or "").strip()
     text = str(comment.get("text") or "").strip()
+
+    if author and not comment.get("by_her"):
+        parts.append(f"{quoted(author)} wrote:")
 
     if text:
         parts.append(quoted(text))
@@ -141,6 +147,9 @@ def written(
         name = KINDS.get(kind, kind or "media")
         description = str(item.get("description") or "").strip()
         parts.append(f"[{name}: {description or 'not described'}]")
+
+    if len(parts) == 1 and parts[0].endswith("wrote:"):
+        parts.append("(nothing)")
 
     return " ".join(parts) if parts else "(nothing)"
 

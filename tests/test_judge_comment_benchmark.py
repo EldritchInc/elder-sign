@@ -11,7 +11,7 @@ from azathoth.evaluation import decode_benchmark_document, encode_benchmark_docu
 from azathoth.workflows import decode_workflow_document
 
 from elder_sign.build import DOCUMENTS
-from tests.test_classify_comment import JUDGE
+from tests.test_classify_comment import MODELS
 from tests.test_media_judging import cli, install
 from tests.tools import run_tool
 
@@ -145,7 +145,7 @@ def test_a_judge_that_always_says_one_verdict_passes_only_those_cases(
     capsys: pytest.CaptureFixture[str],
     verdict: str,
 ) -> None:
-    install(monkeypatch, tmp_path, capsys, models=(JUDGE,), reply=json.dumps({"verdict": verdict}))
+    install(monkeypatch, tmp_path, capsys, models=MODELS, reply=json.dumps({"verdict": verdict}))
     cli(capsys, "benchmark", "import", str(BENCHMARK))
 
     output = cli(capsys, "benchmark", "run", BENCHMARK_ID, "--workflow", JUDGE_COMMENT_ID)

@@ -203,7 +203,7 @@ def test_a_swarm_is_judged_once_and_its_return_asks_nothing(
         "c6": ("hostile", "model"),
         "c7": ("hostile", "blocked_term"),
     }
-    assert first["model"] == {"groups": 4, "unreadable": 0}
+    assert first["model"] == {"groups": 4, "unreadable": 0, "escalated": 0}
     assert first["layers"] == {"trusted_author": 1, "blocked_term": 1, "model": 5}
     assert (first["platform"], first["post_id"], first["policy"]) == (
         "facebook",
@@ -213,7 +213,7 @@ def test_a_swarm_is_judged_once_and_its_return_asks_nothing(
 
     second = moderate(capsys, RETURN)
 
-    assert second["model"] == {"groups": 0, "unreadable": 0}
+    assert second["model"] == {"groups": 0, "unreadable": 0, "escalated": 0}
     assert "model" not in second["layers"]
     assert {verdict for verdict, _ in verdicts(second).values()} == {"friendly", "hostile"}
     assert verdicts(second)["c1"] == ("friendly", "content")
@@ -231,7 +231,7 @@ def test_a_scan_nothing_needs_a_model_for_maps_nothing(
         capsys, [comment("c1", "bestie", "hi babe"), comment("c2", "troll", "tr4nny")]
     )
 
-    assert outcome["model"] == {"groups": 0, "unreadable": 0}
+    assert outcome["model"] == {"groups": 0, "unreadable": 0, "escalated": 0}
     assert verdicts(outcome) == {
         "c1": ("friendly", "trusted_author"),
         "c2": ("hostile", "blocked_term"),
@@ -245,7 +245,7 @@ def test_an_empty_scan_has_no_verdicts(
     outcome = moderate(capsys, [])
 
     assert outcome["verdicts"] == []
-    assert outcome["model"] == {"groups": 0, "unreadable": 0}
+    assert outcome["model"] == {"groups": 0, "unreadable": 0, "escalated": 0}
 
 
 def test_media_no_model_has_described_is_reported(

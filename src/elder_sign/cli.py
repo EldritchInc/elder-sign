@@ -332,8 +332,8 @@ def _judge(
     groups = _plural(int(model.get("groups", 0)), "group", "groups")
     new_media = _plural(judgment.described, "new GIF, sticker or image", "new media")
     print(
-        f"Asked a model about {groups} ({model.get('unreadable', 0)} unreadable); "
-        f"described {new_media}."
+        f"Asked a model about {groups} ({model.get('unreadable', 0)} unreadable, "
+        f"{model.get('escalated', 0)} judged again by Opus 5.5); described {new_media}."
     )
 
     if judgment.held:

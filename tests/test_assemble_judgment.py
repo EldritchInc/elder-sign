@@ -23,15 +23,23 @@ GROUP = {
 }
 
 
+def assembled(
+    judgment: Any,
+    group: dict[str, Any] = GROUP,
+    **inputs: Any,
+) -> dict[str, Any]:
+    """Run the built assemble_judgment on one group and one judgment, returning all it returns."""
+
+    return run_tool("assemble_judgment", {"group": group, "judgment": judgment, **inputs})
+
+
 def assemble(
     judgment: Any,
     group: dict[str, Any] = GROUP,
 ) -> dict[str, Any]:
     """Run the built assemble_judgment on one group and one judgment."""
 
-    judged: dict[str, Any] = run_tool("assemble_judgment", {"group": group, "judgment": judgment})[
-        "judged"
-    ]
+    judged: dict[str, Any] = assembled(judgment, group)["judged"]
 
     return judged
 
@@ -55,7 +63,47 @@ def test_a_sound_judgment_is_taken_as_given_and_joined_to_its_group() -> None:
         "model": None,
         "reason": "slur",
         "valid": True,
+        "escalated": False,
     }
+
+
+# Escalating to a stronger model
+
+
+@pytest.mark.parametrize(
+    ("judgment", "escalate"),
+    [
+        ({"verdict": "uncertain"}, True),
+        ({"verdict": "hostile", "context_independent": False}, True),
+        ({"verdict": "hostile"}, True),
+        ("not an answer", True),
+        ({"verdict": "hostile", "context_independent": True}, False),
+        ({"verdict": "friendly"}, False),
+        ({"verdict": "friendly", "context_independent": True}, False),
+    ],
+    ids=[
+        "uncertain",
+        "hostile in context",
+        "hostile, unsaid where",
+        "unreadable",
+        "hostile anywhere",
+        "friendly",
+        "friendly anywhere",
+    ],
+)
+def test_what_is_uncertain_or_hostile_only_in_context_is_escalated(
+    judgment: Any,
+    escalate: bool,
+) -> None:
+    assert assembled(judgment)["escalate"] is escalate
+
+
+def test_a_stronger_models_judgment_is_marked_and_never_escalated_again() -> None:
+    output = assembled({"verdict": "uncertain"}, escalated=True, model="openrouter/opus")
+
+    assert output["escalate"] is False
+    assert output["judged"]["escalated"] is True
+    assert output["judged"]["model"] == "openrouter/opus"
 
 
 def test_a_verdict_is_read_whatever_its_case_or_spacing() -> None:

@@ -418,7 +418,7 @@ def test_a_scan_is_judged_through_azathoth_its_gif_described_once(
     second = judge(scan_of(SCAN), platform, AzathothRunner())
 
     assert second.described == 0
-    assert second.outcome["model"] == {"groups": 0, "unreadable": 0}
+    assert second.outcome["model"] == {"groups": 0, "unreadable": 0, "escalated": 0}
     assert verdicts(second)["c3"] == ("hostile", "media")
     assert second.held == ("c4",)
     # the gone GIF is tried again each run; the described one never is
@@ -476,6 +476,7 @@ def test_the_judge_command_judges_and_keeps_the_verdicts_privately(
 
     assert "Judged 1 comments on reel 2027199361330354: 1 hostile, 0 friendly" in printed
     assert "Decided 1 by model." in printed
+    assert "(0 unreadable, 0 judged again by Opus 5.5)" in printed
     assert "Held 1 comment for the next run" in printed
     assert "Nothing on Facebook was changed." in printed
     assert report["held"] == ["c1"]

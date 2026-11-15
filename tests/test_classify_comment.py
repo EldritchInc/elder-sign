@@ -29,6 +29,16 @@ JUDGE = ModelMetadata(
     context_window_tokens=32_768,
 )
 
+OPUS = ModelMetadata(
+    provider="openrouter",
+    model="anthropic/claude-opus-5.5",
+    display_name="Scripted Opus 5.5",
+    context_window_tokens=200_000,
+)
+"""A scripted stand-in under the identifier the escalation step requires."""
+
+MODELS = (JUDGE, OPUS)
+
 HOSTILE = {
     "verdict": "hostile",
     "context_independent": True,
@@ -62,18 +72,44 @@ def classify(
 # The workflow
 
 
-def test_classify_comment_prepares_asks_and_assembles() -> None:
+def test_classify_comment_prepares_asks_assembles_and_escalates() -> None:
     workflow = decode_workflow_document(CLASSIFY_COMMENT.read_text(encoding="utf-8"))
-    prepare, ask, assemble = workflow.steps
+    prepare, ask, assemble, again, settle, keep = workflow.steps
 
     assert isinstance(prepare.specification, ToolStepSpecification)
     assert isinstance(ask.specification, ContextPromptStrategySpec)
-    assert isinstance(assemble.specification, ToolStepSpecification)
+    assert isinstance(again.specification, ContextPromptStrategySpec)
     assert prepare.specification.requirement.name == "prepare_classification"
-    assert assemble.specification.requirement.name == "assemble_judgment"
+
+    for step in (assemble, settle, keep):
+        assert isinstance(step.specification, ToolStepSpecification)
+        assert step.specification.requirement.name == "assemble_judgment"
+
     assert set(assemble.depends_on) == {prepare.id, ask.id}
+    assert [
+        (condition.source.producer_step_id, condition.source.name, condition.expected)
+        for step in (again, settle, keep)
+        for condition in step.conditions
+    ] == [
+        (assemble.id, "escalate", True),
+        (assemble.id, "escalate", True),
+        (assemble.id, "escalate", False),
+    ]
     assert workflow.result is not None
     assert workflow.result.model_dump(mode="json") == {"name": "judged"}
+
+
+def test_the_second_look_is_opus_with_the_very_same_prompt() -> None:
+    workflow = decode_workflow_document(CLASSIFY_COMMENT.read_text(encoding="utf-8"))
+    ask, again = workflow.steps[1], workflow.steps[3]
+
+    assert isinstance(ask.specification, ContextPromptStrategySpec)
+    assert isinstance(again.specification, ContextPromptStrategySpec)
+    assert again.specification.model_dump(mode="json")["model_selection"] == {
+        "provider": "openrouter",
+        "model": "anthropic/claude-opus-5.5",
+    }
+    assert again.specification.template == ask.specification.template
 
 
 def test_the_prompt_states_the_policy_and_shows_only_words() -> None:
@@ -117,7 +153,7 @@ def test_a_group_is_judged_by_the_model(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    install(monkeypatch, tmp_path, capsys, models=(JUDGE,), reply=HOSTILE)
+    install(monkeypatch, tmp_path, capsys, models=MODELS, reply=HOSTILE)
 
     judged = classify(capsys, GROUP)
 
@@ -132,7 +168,62 @@ def test_a_group_is_judged_by_the_model(
         "model": None,
         "reason": "questions that she is a woman",
         "valid": True,
+        "escalated": False,
     }
+
+
+# A second look
+
+
+IN_CONTEXT = {"verdict": "hostile", "context_independent": False, "reason": "about genitals"}
+
+ALLY = {"verdict": "friendly", "context_independent": False, "reason": "defends her"}
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "verdict", "escalated"),
+    [
+        (IN_CONTEXT, ALLY, "friendly", True),
+        ({"verdict": "uncertain"}, HOSTILE, "hostile", True),
+        (HOSTILE, ALLY, "hostile", False),
+        ({"verdict": "friendly"}, HOSTILE, "friendly", False),
+    ],
+    ids=["hostile in context", "uncertain", "hostile anywhere", "friendly"],
+)
+def test_opus_judges_again_what_is_uncertain_or_hostile_only_in_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    first: dict[str, Any],
+    second: dict[str, Any],
+    verdict: str,
+    escalated: bool,
+) -> None:
+    install(
+        monkeypatch,
+        tmp_path,
+        capsys,
+        models=MODELS,
+        replies={JUDGE.identifier: first, OPUS.identifier: second},
+    )
+
+    judged = classify(capsys, GROUP)
+
+    assert (judged["verdict"], judged["escalated"]) == (verdict, escalated)
+    assert judged["model"] == (OPUS.identifier if escalated else None)
+
+
+def test_without_opus_the_workflow_fails_rather_than_guess(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    install(monkeypatch, tmp_path, capsys, models=(JUDGE,), reply=HOSTILE)
+
+    status = main_status(GROUP)
+    capsys.readouterr()
+
+    assert status != 0
 
 
 @pytest.mark.parametrize(
@@ -146,7 +237,7 @@ def test_a_bad_answer_judges_the_group_uncertain_instead_of_failing(
     capsys: pytest.CaptureFixture[str],
     reply: str,
 ) -> None:
-    install(monkeypatch, tmp_path, capsys, models=(JUDGE,), reply=reply)
+    install(monkeypatch, tmp_path, capsys, models=MODELS, reply=reply)
 
     judged = classify(capsys, GROUP)
 
@@ -155,6 +246,7 @@ def test_a_bad_answer_judges_the_group_uncertain_instead_of_failing(
         False,
         False,
     )
+    assert judged["escalated"] is True
 
 
 def test_a_fenced_answer_is_read(
@@ -163,7 +255,7 @@ def test_a_fenced_answer_is_read(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     install(
-        monkeypatch, tmp_path, capsys, models=(JUDGE,), reply=f"```json\n{json.dumps(HOSTILE)}\n```"
+        monkeypatch, tmp_path, capsys, models=MODELS, reply=f"```json\n{json.dumps(HOSTILE)}\n```"
     )
 
     assert classify(capsys, GROUP)["verdict"] == "hostile"
@@ -207,7 +299,7 @@ def test_a_judged_group_is_never_asked_about_again(
     capsys: pytest.CaptureFixture[str],
     state: sqlite3.Connection,
 ) -> None:
-    install(monkeypatch, tmp_path, capsys, models=(JUDGE,), reply=HOSTILE)
+    install(monkeypatch, tmp_path, capsys, models=MODELS, reply=HOSTILE)
     (group,) = lookup(
         comment("c1", "you will never be a woman"),
         comment("c2", "Y0U W1LL NEVER BE A W0MAN", author="t2"),
