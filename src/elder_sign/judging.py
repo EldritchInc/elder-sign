@@ -21,6 +21,7 @@ import io
 import json
 import tempfile
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final, Protocol
@@ -69,7 +70,11 @@ class Runner(Protocol):
 
 
 class AzathothRunner:
-    """Runs workflows through Azathoth's own command, in this process, as `azathoth` would."""
+    """Runs workflows through Azathoth's own command, in this process, as `azathoth` would.
+
+    Each runs on a thread of its own: Azathoth starts its own event loop, and
+    the browser keeps one running on the thread that reads the platform.
+    """
 
     def run(
         self,
@@ -94,8 +99,12 @@ class AzathothRunner:
         arguments = ["workflow", "run", workflow_id, *source, "--output", "result"]
         printed, complained = io.StringIO(), io.StringIO()
 
-        with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(complained):
-            status = main(arguments)
+        def run_azathoth() -> int:
+            with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(complained):
+                return main(arguments)
+
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="azathoth") as pool:
+            status = pool.submit(run_azathoth).result()
 
         name = WORKFLOW_NAMES.get(workflow_id, workflow_id)
 

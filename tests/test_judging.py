@@ -6,6 +6,7 @@ runs through Azathoth itself: a scripted model that can see describes the
 GIF, and the stand-in child of the moderate-scan tests judges the words.
 """
 
+import asyncio
 import json
 import sqlite3
 from collections.abc import Iterator
@@ -343,6 +344,17 @@ def test_a_scan_is_judged_through_azathoth_its_gif_described_once(
     assert second.held == ("c4",)
     # the gone GIF is tried again each run; the described one never is
     assert platform.calls["fetch_media"] == 3
+
+
+def test_azathoth_runs_even_where_an_event_loop_is_running_as_the_browser_keeps_one(
+    installed: sqlite3.Connection,
+) -> None:
+    async def inside_a_running_loop() -> Any:
+        return AzathothRunner().run(RESOLVE_COMMENTS_ID, scan_of([comment("c1", "a", "hi")]))
+
+    resolution = asyncio.run(inside_a_running_loop())
+
+    assert resolution["needs_inference"][0]["comment_ids"] == ["c1"]
 
 
 def test_a_workflow_azathoth_does_not_have_is_an_error_saying_so(
