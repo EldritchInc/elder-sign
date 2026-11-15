@@ -7,16 +7,18 @@ from typing import Any
 
 import pytest
 
+from elder_sign.policy import TRANSPHOBIC_HARASSMENT
 from elder_sign.shared.store import (
     Verdict,
     connect,
+    write_description,
     write_standing,
     write_term,
     write_verdict,
 )
 from tests.tools import grant_state_file, run_tool
 
-POLICY = "transphobia"
+POLICY = TRANSPHOBIC_HARASSMENT
 
 GIF = "https://media.giphy.com/media/3o7TKSjRrfIPjeiVyM/giphy.gif"
 
@@ -173,6 +175,71 @@ def test_a_model_is_shown_neither_keys_nor_author_ids(
     (group,) = lookup(comment("c1", "hi", author_name="Kim", created_at="t"))["needs_inference"]
 
     assert group["comment"] == {"id": "c1", "author_name": "Kim", "text": "hi", "created_at": "t"}
+
+
+# Media, as a model is shown it
+
+
+OTHER_GIF = "https://media.giphy.com/media/xT9IgzoKnwFNmISR8I/giphy.gif"
+
+
+def test_media_is_shown_by_its_description_never_its_url(
+    state: sqlite3.Connection,
+) -> None:
+    write_description(state, "m:giphy:3o7TKSjRrfIPjeiVyM", "A clown honking a horn.")
+
+    (group,) = lookup(comment("g1", "lol", media=[{"kind": "gif", "url": GIF}]))["needs_inference"]
+
+    assert group["comment"]["media"] == [{"kind": "gif", "description": "A clown honking a horn."}]
+
+
+def test_media_no_model_has_described_is_named_for_judging_first(
+    state: sqlite3.Connection,
+) -> None:
+    resolution = lookup(comment("g1", "lol", media=[{"kind": "gif", "url": GIF + "?cid=1"}]))
+    (group,) = resolution["needs_inference"]
+
+    assert group["comment"]["media"] == [{"kind": "gif", "description": None}]
+    assert resolution["undescribed_media"] == [
+        {"media_key": "m:giphy:3o7TKSjRrfIPjeiVyM", "kind": "gif", "url": GIF + "?cid=1"}
+    ]
+
+
+def test_described_media_is_not_named_again(
+    state: sqlite3.Connection,
+) -> None:
+    write_description(state, "m:giphy:3o7TKSjRrfIPjeiVyM", "A clown.")
+
+    resolution = lookup(comment("g1", "lol", media=[{"kind": "gif", "url": GIF}]))
+
+    assert resolution["undescribed_media"] == []
+
+
+def test_a_parents_undescribed_media_is_named_too_and_each_once(
+    state: sqlite3.Connection,
+) -> None:
+    resolution = lookup(
+        comment("p1", None, media=[{"kind": "image", "url": OTHER_GIF}]),
+        comment("r1", "so true", parent="p1"),
+        comment("r2", "lmao", parent="p1", media=[{"kind": "gif", "url": GIF}]),
+        comment("r3", "facts", media=[{"kind": "gif", "url": GIF}]),
+    )
+
+    assert [entry["media_key"] for entry in resolution["undescribed_media"]] == [
+        "m:giphy:xT9IgzoKnwFNmISR8I",
+        "m:giphy:3o7TKSjRrfIPjeiVyM",
+    ]
+
+
+def test_media_of_a_comment_decided_without_a_model_is_not_named(
+    state: sqlite3.Connection,
+) -> None:
+    write_standing(state, "facebook", "bestie", "trusted")
+
+    resolution = lookup(comment("g1", "lol", author="bestie", media=[{"kind": "gif", "url": GIF}]))
+
+    assert resolution["needs_inference"] == []
+    assert resolution["undescribed_media"] == []
 
 
 # Authors

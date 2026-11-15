@@ -18,6 +18,7 @@ from elder_sign.build import (
 )
 from elder_sign.shared.store import (
     DATABASE_ENVIRONMENT_VARIABLE,
+    MIGRATIONS,
     SCHEMA_VERSION,
     Fingerprint,
     StoreError,
@@ -26,18 +27,20 @@ from elder_sign.shared.store import (
     database_path,
     forget_standing,
     forget_term,
+    read_description,
     read_fingerprint,
     read_standing,
     read_terms,
     read_verdict,
     transaction,
+    write_description,
     write_fingerprint,
     write_standing,
     write_term,
     write_verdict,
 )
 
-TABLES = {"actions", "authors", "posts", "terms", "verdicts"}
+TABLES = {"actions", "authors", "media", "posts", "terms", "verdicts"}
 
 MODEL_HOSTILE = Verdict(verdict="hostile", source="model", model="m", reason="slur")
 
@@ -135,6 +138,38 @@ def test_a_file_from_a_newer_elder_sign_is_refused(
 
     with pytest.raises(StoreError, match="newer than this Elder Sign"):
         connect(path)
+
+
+def test_a_file_at_an_older_schema_is_migrated_and_keeps_what_it_kept(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "state.db"
+    raw = sqlite3.connect(path, isolation_level=None)
+
+    for statement in MIGRATIONS[0].split(";"):
+        if statement.strip():
+            raw.execute(statement)
+
+    raw.execute("PRAGMA user_version = 1")
+    raw.execute(
+        "INSERT INTO terms (policy, term, recorded_at) VALUES ('transphobia', 'slur', 'then')"
+    )
+    raw.close()
+
+    connection = connect(path)
+
+    try:
+        (version,) = connection.execute("PRAGMA user_version").fetchone()
+
+        assert version == SCHEMA_VERSION == 2
+        assert tables(connection) == TABLES
+        assert read_terms(connection, "transphobia") == ("slur",)
+    finally:
+        connection.close()
+
+
+def test_every_schema_version_has_its_migration() -> None:
+    assert len(MIGRATIONS) == SCHEMA_VERSION
 
 
 # Fingerprints
@@ -255,6 +290,29 @@ def test_terms_are_kept_per_policy_once_each(
 
     with pytest.raises(StoreError):
         write_term(state, "transphobia", "   ")
+
+
+# Media descriptions
+
+
+def test_a_description_is_kept_and_replaced(
+    state: sqlite3.Connection,
+) -> None:
+    assert read_description(state, "m:giphy:abc") is None
+
+    write_description(state, "m:giphy:abc", "  a clown honking a horn ", "vision-model")
+    assert read_description(state, "m:giphy:abc") == "a clown honking a horn"
+
+    write_description(state, "m:giphy:abc", "a clown honking a red horn")
+    assert read_description(state, "m:giphy:abc") == "a clown honking a red horn"
+    assert read_description(state, "m:giphy:other") is None
+
+
+def test_a_blank_description_is_refused(
+    state: sqlite3.Connection,
+) -> None:
+    with pytest.raises(StoreError):
+        write_description(state, "m:giphy:abc", "   ")
 
 
 # Writing together

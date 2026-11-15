@@ -17,6 +17,12 @@ context, or by their content when their parent is unknown, so that a swarm's
 hundred copies of one comment under one parent are asked about once. Each
 group carries one comment and its parent, as a model is shown them.
 
+A model is shown a comment's words and, for each GIF or image, its
+description from when `judge-media` looked at it, never the media itself. A
+group whose comment or parent has media no model has described yet names it
+in `undescribed_media`, with the URL to fetch it from, so the scan can have
+it judged before the words beside it are.
+
 This tool only reads the state file: `record_verdicts` keeps what a model
 decides.
 """
@@ -24,11 +30,12 @@ decides.
 import sqlite3
 from typing import Any, Final
 
-from elder_sign.shared.keys import term_matches
+from elder_sign.shared.keys import media_key, term_matches
 from elder_sign.shared.protocol import JsonObject
 from elder_sign.shared.store import (
     DATABASE_ENVIRONMENT_VARIABLE,
     connect,
+    read_description,
     read_standing,
     read_terms,
     read_verdict,
@@ -36,16 +43,16 @@ from elder_sign.shared.store import (
 
 TOOL_ID: Final = "e1de7516-0000-4000-8000-000000000040"
 
-IMPLEMENTATION_ID: Final = "e1de7516-0000-4000-8000-000000000041"
+IMPLEMENTATION_ID: Final = "e1de7516-0000-4000-8000-000000000042"
 
 NAME: Final = "lookup_verdicts"
 
-VERSION: Final = "1.0.0"
+VERSION: Final = "1.1.0"
 
 DESCRIPTION: Final = (
     "Decide every comment of a keyed scan that trusted and blocked authors, blocked terms and "
     "remembered verdicts can decide, and group the rest so each distinct comment in its "
-    "context is asked about once."
+    "context is asked about once, shown with what its media shows."
 )
 
 LAYERS: Final = (
@@ -59,8 +66,18 @@ LAYERS: Final = (
 )
 """The layers that decide a comment without a model, in the order they are tried."""
 
-SHOWN_FIELDS: Final = ("id", "author_name", "text", "media", "created_at")
+SHOWN_FIELDS: Final = ("id", "author_name", "text", "created_at")
 """The fields of a comment a model is shown: never its keys, nor its author's ID."""
+
+UNDESCRIBED_SCHEMA: Final[JsonObject] = {
+    "type": "object",
+    "properties": {
+        "media_key": {"type": "string"},
+        "kind": {"type": ["string", "null"]},
+        "url": {"type": ["string", "null"]},
+    },
+    "required": ["media_key", "kind", "url"],
+}
 
 RESOLVED_SCHEMA: Final[JsonObject] = {
     "type": "object",
@@ -125,6 +142,7 @@ OUTPUT_SCHEMA: Final[JsonObject] = {
                 "policy": {"type": "string"},
                 "resolved": {"type": "array", "items": RESOLVED_SCHEMA},
                 "needs_inference": {"type": "array", "items": GROUP_SCHEMA},
+                "undescribed_media": {"type": "array", "items": UNDESCRIBED_SCHEMA},
                 "layers": {"type": "object", "additionalProperties": {"type": "integer"}},
             },
             "required": [
@@ -133,6 +151,7 @@ OUTPUT_SCHEMA: Final[JsonObject] = {
                 "policy",
                 "resolved",
                 "needs_inference",
+                "undescribed_media",
                 "layers",
             ],
         }
@@ -144,11 +163,32 @@ ENVIRONMENT: Final = (DATABASE_ENVIRONMENT_VARIABLE,)
 
 
 def _shown(
+    connection: sqlite3.Connection,
     comment: JsonObject,
+    undescribed: dict[str, JsonObject],
 ) -> JsonObject:
-    """Return the part of a comment a model is shown."""
+    """Return the part of a comment a model is shown, noting media not yet described.
 
-    return {field: comment[field] for field in SHOWN_FIELDS if field in comment}
+    Each GIF or image is shown as its kind and description; media no model
+    has described is shown with no description, and noted in `undescribed`.
+    """
+
+    shown: JsonObject = {field: comment[field] for field in SHOWN_FIELDS if field in comment}
+    media: list[JsonObject] = []
+
+    for item in comment.get("media") or ():
+        key = media_key(item)
+        description = None if key is None else read_description(connection, key)
+        kind = item.get("kind")
+        media.append({"kind": kind, "description": description})
+
+        if key is not None and description is None and key not in undescribed:
+            undescribed[key] = {"media_key": key, "kind": kind, "url": item.get("url")}
+
+    if media:
+        shown["media"] = media
+
+    return shown
 
 
 def _decide(
@@ -211,6 +251,7 @@ def run(
 
     resolved: list[JsonObject] = []
     groups: dict[tuple[str, str], JsonObject] = {}
+    undescribed: dict[str, JsonObject] = {}
     layers: dict[str, int] = {}
 
     connection = connect()
@@ -253,8 +294,10 @@ def run(
                 "context_key": keys["context"],
                 "media_keys": list(keys["media"]),
                 "comment_ids": [str(comment["id"])],
-                "comment": _shown(comment),
-                "parent": None if parent is None or parent is comment else _shown(parent),
+                "comment": _shown(connection, comment, undescribed),
+                "parent": None
+                if parent is None or parent is comment
+                else _shown(connection, parent, undescribed),
             }
     finally:
         connection.close()
@@ -266,6 +309,7 @@ def run(
             "policy": policy,
             "resolved": resolved,
             "needs_inference": list(groups.values()),
+            "undescribed_media": list(undescribed.values()),
             "layers": layers,
         }
     }
