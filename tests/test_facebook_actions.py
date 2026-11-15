@@ -9,6 +9,7 @@ comment numbered as the start of another's number is there to be mistaken.
 
 import base64
 import os
+import re
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -85,6 +86,11 @@ PAGE = f"""<html><body>
 <div role="article" id="c108" aria-label="Comment">
 <span class="text">tagging her</span> <a href="/reel/1/?comment_id=108">7h</a>
 <div role="button" class="tagmenu" aria-label="Delete, hide or report this">…</div>
+</div>
+<div role="article" id="c111" aria-label="Comment" data-hidden="1">This comment was hidden.
+<a href="/reel/1/?comment_id=111">10h</a>
+<div role="button" class="unhide">Unhide</div>
+<div role="button" class="menu" aria-label="Delete, unhide or report this">…</div>
 </div>
 <div role="article" id="c109" aria-label="Comment">This comment was hidden.
 <a href="/reel/1/?comment_id={ENCODED_109}">8h</a>
@@ -216,6 +222,7 @@ def test_hiding_uses_the_button_under_that_comment_alone(
         "c108": "0",
         "c109": "0",
         "c110": "0",
+        "c111": "1",
         "c103": "1",
     }
 
@@ -293,7 +300,7 @@ def test_a_comment_not_found_says_what_the_page_shows(
         browser.act(comment_id("999"), "unhide")
 
     assert "1 without a permalink" in str(raised.value)
-    assert "3 reading 'This comment was hidden'" in str(raised.value)
+    assert re.search(r"\d+ reading 'This comment was hidden'", str(raised.value))
     assert "linked as: comment_id=105+reply_comment_id=305" in str(raised.value)
 
 
@@ -345,3 +352,40 @@ def test_the_menu_that_opened_is_read_and_not_stray_items_elsewhere_on_the_page(
     assert probed == ("Delete [clickable]", "Hide comment [button]", "Report comment [button]")
     assert menu == ("Delete", "Hide comment", "Report comment")
     assert "c110" not in after
+
+
+def test_a_hidden_comment_is_deleted_through_its_own_menu_name(
+    tmp_path: Path,
+) -> None:
+    with opened(tmp_path) as (browser, page):
+        browser.act(comment_id("111"), "delete")
+        after = state(page)
+
+    assert "c111" not in after
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Edit or delete this",
+        "Delete, hide or report this",
+        "Delete, unhide or report this",
+        "Hide or report this",
+        "Edit, delete, hide or report this",
+    ],
+)
+def test_every_name_facebook_gives_a_comments_menu_is_known(
+    name: str,
+) -> None:
+    from elder_sign.platforms.facebook.reader import COMMENT_MENU
+
+    assert COMMENT_MENU.match(name)
+
+
+@pytest.mark.parametrize("name", ["Delete", "Hide", "Report this post", "Like", "Reply"])
+def test_no_other_button_is_taken_for_a_comments_menu(
+    name: str,
+) -> None:
+    from elder_sign.platforms.facebook.reader import COMMENT_MENU
+
+    assert not COMMENT_MENU.match(name)

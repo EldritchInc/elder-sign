@@ -464,16 +464,19 @@ HIDDEN_BY_YOU: Final = re.compile(r"^Hidden by You\b", re.IGNORECASE)
 ALL_COMMENTS: Final = re.compile(r"^All comments\b", re.IGNORECASE)
 """The choice that shows every comment, rather than only those Facebook ranks highest."""
 
+MENU_VERBS: Final = r"(?:edit|delete|hide|unhide|remove|report)"
+"""What a comment's "…" button says it lets her do, in Facebook's words."""
+
 COMMENT_MENU: Final = re.compile(
-    r"^(?:Edit or delete this|Delete, hide or report this|Hide or report this|"
-    r"Remove or report this|"
-    r"Edit, delete or hide this|More options(?: for this comment)?|Actions for this comment)$",
+    rf"^(?:{MENU_VERBS}(?:, {MENU_VERBS})*,? or {MENU_VERBS} this"
+    r"|More options(?: for this comment)?|Actions for this comment)$",
     re.IGNORECASE,
 )
 """The name of the "…" button that opens one comment's menu.
 
-On her own comments Facebook names it "Edit or delete this"; on others' comments
-on her post, "Delete, hide or report this".
+Facebook names it by what it offers: "Edit or delete this" on her own comments,
+"Delete, hide or report this" on others' comments on her post, and "Delete,
+unhide or report this" on a comment she hid.
 """
 
 MENU_ITEMS: Final = {
