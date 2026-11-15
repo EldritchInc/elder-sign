@@ -12,5 +12,5 @@ A tool module declares its document as module constants and its behavior as
 - `run(inputs) -> outputs`.
 """
 
-TOOL_MODULES: tuple[str, ...] = ()
+TOOL_MODULES: tuple[str, ...] = ("elder_sign.tools.normalize_comments",)
 """Every tool module, by import name."""
