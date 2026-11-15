@@ -20,5 +20,6 @@ TOOL_MODULES: tuple[str, ...] = (
     "elder_sign.tools.record_verdicts",
     "elder_sign.tools.record_media",
     "elder_sign.tools.prepare_classification",
+    "elder_sign.tools.assemble_judgment",
 )
 """Every tool module, by import name."""
