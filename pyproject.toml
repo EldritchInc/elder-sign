@@ -1,0 +1,85 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "elder-sign"
+version = "0.1.0.dev0"
+description = "Ward your posts against troll swarms: deterministic-first comment moderation on Azathoth."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Eris Discordia Montano" }
+]
+keywords = [
+    "moderation",
+    "content-moderation",
+    "harassment",
+    "trolls",
+    "azathoth",
+    "llm",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+dependencies = [
+    "azathoth-ai>=1.4,<2",
+]
+
+[project.urls]
+Homepage = "https://github.com/EldritchInc/elder-sign"
+Repository = "https://github.com/EldritchInc/elder-sign"
+Issues = "https://github.com/EldritchInc/elder-sign/issues"
+Azathoth = "https://github.com/EldritchInc/azathoth"
+
+[project.optional-dependencies]
+dev = [
+    "mypy",
+    "pytest",
+    "ruff",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+elder_sign = ["py.typed", "documents/tools/*.json", "documents/workflows/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = [".", "src"]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "SIM",
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+pretty = true

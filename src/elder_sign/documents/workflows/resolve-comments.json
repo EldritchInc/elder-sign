@@ -1,0 +1,94 @@
+{
+  "metadata": {
+    "id": "e1de7516-0000-4000-8000-000000000100",
+    "name": "resolve comments",
+    "description": "Key every comment of one scan of a post, then decide every comment that trusted and blocked authors, blocked terms and remembered verdicts can decide, grouping the rest so each distinct comment in its context is asked about once. Uses no model.",
+    "version": "1.0.0"
+  },
+  "steps": [
+    {
+      "id": "e1de7516-0000-4000-8000-000000000101",
+      "specification": {
+        "requirement": {
+          "name": "normalize_comments",
+          "version": "1.0.0",
+          "runtime": "process"
+        }
+      },
+      "depends_on": [],
+      "inputs": [
+        {
+          "name": "scan",
+          "source": {
+            "event_type": "workflow.input.received",
+            "field_name": "input"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "keyed_scan",
+          "path": [
+            "scan"
+          ]
+        }
+      ],
+      "conditions": [],
+      "retry_policy": {
+        "max_attempts": 1,
+        "initial_delay_seconds": 0.0,
+        "backoff_multiplier": 1.0,
+        "maximum_delay_seconds": null
+      },
+      "failure_policy": "fail_workflow"
+    },
+    {
+      "id": "e1de7516-0000-4000-8000-000000000102",
+      "specification": {
+        "requirement": {
+          "name": "lookup_verdicts",
+          "version": "1.0.0",
+          "runtime": "process"
+        }
+      },
+      "depends_on": [
+        "e1de7516-0000-4000-8000-000000000101"
+      ],
+      "inputs": [
+        {
+          "name": "scan",
+          "source": {
+            "name": "keyed_scan"
+          }
+        },
+        {
+          "name": "settings",
+          "source": {
+            "value": {
+              "policy": "transphobia"
+            }
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "resolution",
+          "path": [
+            "resolution"
+          ]
+        }
+      ],
+      "conditions": [],
+      "retry_policy": {
+        "max_attempts": 2,
+        "initial_delay_seconds": 0.0,
+        "backoff_multiplier": 1.0,
+        "maximum_delay_seconds": null
+      },
+      "failure_policy": "fail_workflow"
+    }
+  ],
+  "result": {
+    "name": "resolution"
+  }
+}
