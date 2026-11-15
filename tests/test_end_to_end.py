@@ -18,6 +18,7 @@ from azathoth.cli import DATABASE_ENVIRONMENT_VARIABLE as AZATHOTH_DATABASE
 from azathoth.cli import main
 
 from elder_sign.build import DOCUMENTS
+from elder_sign.policy import TRANSPHOBIC_HARASSMENT
 from elder_sign.shared.store import (
     DATABASE_ENVIRONMENT_VARIABLE,
     connect,
@@ -64,7 +65,7 @@ def state(
 
     try:
         write_standing(connection, "facebook", "bestie", "trusted")
-        write_term(connection, "transphobia", "Tr4nny")
+        write_term(connection, TRANSPHOBIC_HARASSMENT, "Tr4nny")
         yield connection
     finally:
         connection.close()
@@ -203,7 +204,7 @@ def test_a_swarm_is_judged_once_and_never_again(
         "record_verdicts",
         {
             "judged": [stand_in_model(group) for group in first["needs_inference"]],
-            "settings": {"policy": "transphobia"},
+            "settings": {"policy": TRANSPHOBIC_HARASSMENT},
         },
     )
     hostile = {

@@ -16,6 +16,7 @@ from azathoth.workflows import (
 )
 
 from elder_sign.build import DOCUMENTS
+from elder_sign.policy import TRANSPHOBIC_HARASSMENT
 
 WORKFLOWS = DOCUMENTS.parent / "workflows"
 
@@ -162,10 +163,15 @@ def test_resolve_comments_keys_the_scan_and_then_looks_it_up() -> None:
     assert specification.result.model_dump(mode="json") == {"name": "resolution"}
 
 
-def test_resolve_comments_judges_under_the_transphobia_policy() -> None:
-    assert constant(workflow(RESOLVE_COMMENTS), "lookup_verdicts", "settings") == {
-        "policy": "transphobia"
-    }
+def test_every_workflow_judges_under_the_default_policy() -> None:
+    for path in SHIPPED:
+        for step in workflow(path).steps:
+            for binding in step.inputs:
+                if binding.name == "settings" and isinstance(binding.source, WorkflowConstantValue):
+                    settings = binding.source.value
+
+                    assert isinstance(settings, dict)
+                    assert settings["policy"] == TRANSPHOBIC_HARASSMENT, path.name
 
 
 def test_resolve_comments_asks_no_model() -> None:
