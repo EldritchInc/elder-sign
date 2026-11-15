@@ -127,6 +127,21 @@ def test_the_prompt_states_the_policy_and_shows_only_words() -> None:
     assert requirements["required_input_modalities"] == ["text"]
 
 
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "her allies may be as harsh with trolls as they like",
+        "explains or defends trans people's bodies or lives to someone attacking her",
+        "tells someone else she is a woman because of her chromosomes or anatomy",
+        "Comments she wrote herself are marked as hers",
+    ],
+)
+def test_the_policy_says_what_her_reel_taught_us(
+    rule: str,
+) -> None:
+    assert rule in TRANSPHOBIC_HARASSMENT_DEFINITION
+
+
 def test_the_reply_is_read_by_elder_sign_not_parsed_by_azathoth() -> None:
     ask = decode_workflow_document(CLASSIFY_COMMENT.read_text(encoding="utf-8")).steps[1]
 
