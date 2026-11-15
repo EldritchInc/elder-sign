@@ -5,6 +5,12 @@ The model is asked for one JSON object:
     {"verdict": "hostile", "context_independent": true, "media_hostile": false,
      "reason": "questions that she is a woman"}
 
+The prompt step returns the model's reply as text, and this tool reads the
+object out of it: as JSON, from inside a Markdown code fence, or from the
+first `{` to the last `}` when the model wrapped it in words. So a model that
+answers badly still has its comments judged, as uncertain, rather than failing
+the scan.
+
 A model's answer is never trusted to be well formed. Whatever it says is held
 to the safest reading that still acts:
 
@@ -21,6 +27,8 @@ to the safest reading that still acts:
 `valid` says whether the model's answer held a verdict it could be taken at.
 """
 
+import json
+import re
 from typing import Any, Final
 
 from elder_sign.shared.protocol import JsonObject
@@ -42,6 +50,9 @@ VERDICTS: Final = ("friendly", "hostile", "uncertain")
 
 MAXIMUM_REASON_LENGTH: Final = 200
 """The longest reason kept, in characters."""
+
+FENCE: Final = re.compile(r"^```[A-Za-z0-9_-]*\s*\n(.*)\n\s*```$", re.DOTALL)
+"""A reply wrapped in one Markdown code fence, with or without a language tag."""
 
 UNREADABLE: Final = "the model's answer could not be read"
 """The reason given when a model's answer held no verdict it could be taken at."""
@@ -108,6 +119,25 @@ GROUP: Final[JsonObject] = {
 
 TEST_CASES: Final = (
     (
+        "reads a judgment from a fenced reply",
+        "A reply a model wrapped in a code fence is read as the JSON inside it.",
+        {
+            "group": GROUP,
+            "judgment": '```json\n{"verdict": "friendly", "context_independent": true}\n```',
+        },
+        {
+            "judged": {
+                **GROUP,
+                "verdict": "friendly",
+                "context_independent": True,
+                "media_hostile": False,
+                "model": None,
+                "reason": None,
+                "valid": True,
+            }
+        },
+    ),
+    (
         "takes a well formed judgment",
         "A judgment the model gave correctly is joined to its group as it was given.",
         {
@@ -150,6 +180,38 @@ TEST_CASES: Final = (
 )
 
 
+def parsed(
+    reply: Any,
+) -> Any:
+    """Return the JSON a model's reply holds, or the reply itself when it is not text.
+
+    A reply is read as JSON, then as JSON inside one code fence, then as the
+    JSON from its first `{` to its last `}`. A reply none of those reads is
+    returned unread, and holds no verdict.
+    """
+
+    if not isinstance(reply, str):
+        return reply
+
+    text = reply.strip()
+    fenced = FENCE.match(text)
+    candidates = [text, fenced.group(1) if fenced else None]
+
+    if "{" in text and "}" in text:
+        candidates.append(text[text.index("{") : text.rindex("}") + 1])
+
+    for candidate in candidates:
+        if candidate is None:
+            continue
+
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+
+    return reply
+
+
 def _verdict(
     judgment: Any,
 ) -> str | None:
@@ -174,7 +236,7 @@ def run(
     """Return the group joined to its judgment, read as safely as it can be."""
 
     group: JsonObject = inputs["group"]
-    judgment = inputs["judgment"]
+    judgment = parsed(inputs["judgment"])
     model = inputs.get("model")
     media_keys = [str(key) for key in group.get("media_keys") or ()]
     verdict = _verdict(judgment)

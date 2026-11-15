@@ -71,6 +71,38 @@ def test_the_model_that_judged_is_kept_when_known() -> None:
     assert judged["model"] == "openrouter/x"
 
 
+# A reply, as the prompt step gives it
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        '{"verdict": "hostile", "context_independent": true}',
+        '```json\n{"verdict": "hostile", "context_independent": true}\n```',
+        '```\n{"verdict": "hostile", "context_independent": true}\n```',
+        'Sure! My answer: {"verdict": "hostile", "context_independent": true} Hope it helps.',
+        '  \n{"verdict": "hostile", "context_independent": true}\n  ',
+    ],
+    ids=["json", "fenced", "bare fence", "wrapped in words", "whitespace"],
+)
+def test_a_judgment_is_read_out_of_the_reply_however_it_was_written(
+    reply: str,
+) -> None:
+    judged = assemble(reply)
+
+    assert (judged["verdict"], judged["context_independent"], judged["valid"]) == (
+        "hostile",
+        True,
+        True,
+    )
+
+
+def test_a_reply_that_holds_no_json_is_unreadable() -> None:
+    judged = assemble("I would say this is probably hostile {but who knows}")
+
+    assert (judged["verdict"], judged["valid"]) == ("uncertain", False)
+
+
 # An unsound judgment
 
 
