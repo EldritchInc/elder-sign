@@ -1,0 +1,138 @@
+{
+  "definition": {
+    "id": "e1de7516-0000-4000-8000-0000000000a0",
+    "name": "combine_verdicts",
+    "description": "Give every comment of a scan its one verdict, from the layers that decided without a model and from the model, counting how many each decided and what the model was asked.",
+    "version": "1.0.0",
+    "input_schema": {
+      "json_schema": {
+        "type": "object",
+        "properties": {
+          "resolution": {
+            "type": "object"
+          },
+          "judged": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "recorded": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "resolution",
+          "judged",
+          "recorded"
+        ]
+      }
+    },
+    "output_schema": {
+      "json_schema": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "object",
+            "properties": {
+              "platform": {
+                "type": "string"
+              },
+              "post_id": {
+                "type": "string"
+              },
+              "policy": {
+                "type": "string"
+              },
+              "verdicts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "comment_id": {
+                      "type": "string"
+                    },
+                    "verdict": {
+                      "enum": [
+                        "friendly",
+                        "hostile",
+                        "uncertain"
+                      ]
+                    },
+                    "layer": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "comment_id",
+                    "verdict",
+                    "layer",
+                    "source"
+                  ]
+                }
+              },
+              "layers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer"
+                }
+              },
+              "model": {
+                "type": "object",
+                "properties": {
+                  "groups": {
+                    "type": "integer"
+                  },
+                  "unreadable": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "groups",
+                  "unreadable"
+                ]
+              },
+              "undescribed_media": {
+                "type": "array"
+              }
+            },
+            "required": [
+              "platform",
+              "post_id",
+              "policy",
+              "verdicts",
+              "layers",
+              "model",
+              "undescribed_media"
+            ]
+          }
+        },
+        "required": [
+          "outcome"
+        ]
+      }
+    }
+  },
+  "implementations": [
+    {
+      "id": "e1de7516-0000-4000-8000-0000000000a1",
+      "tool_id": "e1de7516-0000-4000-8000-0000000000a0",
+      "tool_version": "1.0.0",
+      "version": "1.0.0",
+      "runtime": "process",
+      "entrypoint": "run",
+      "source": "\"\"\"Give every comment of a scan its one verdict, and say how each was reached.\n\nThe inputs are what the scan's earlier steps returned:\n\n- `resolution`: from `lookup_verdicts`, every comment a layer decided, and\n  the media no model has described;\n- `judged`: from `classify-comment`, each group a model judged;\n- `recorded`: from `record_verdicts`, a verdict for every comment of those\n  groups.\n\nThe outcome lists every comment's verdict, those the layers decided first and\nthen those the model did, counts how many each layer decided, and counts what\nthe model was asked: how many groups, and how many of its answers could not be\nread.\n\"\"\"\n\n\n# --- elder_sign.shared.protocol ---\n\nimport json\nimport sys\nfrom collections.abc import Callable\nfrom typing import Any\n\nJsonObject = dict[str, Any]\n\"\"\"A JSON object, as a tool receives its inputs and returns its outputs.\"\"\"\n\n\ndef main(\n    run: Callable[[JsonObject], JsonObject],\n) -> None:\n    \"\"\"Read the tool's inputs from standard input, run it, and write its outputs.\"\"\"\n\n    inputs = json.load(sys.stdin)\n\n    if not isinstance(inputs, dict):\n        raise SystemExit(\"An Elder Sign tool takes one JSON object as its inputs.\")\n\n    json.dump(run(inputs), sys.stdout, ensure_ascii=False, sort_keys=True)\n\n\n# --- elder_sign.tools.combine_verdicts ---\n\nfrom typing import Final\n\n\nTOOL_ID: Final = \"e1de7516-0000-4000-8000-0000000000a0\"\n\nIMPLEMENTATION_ID: Final = \"e1de7516-0000-4000-8000-0000000000a1\"\n\nNAME: Final = \"combine_verdicts\"\n\nVERSION: Final = \"1.0.0\"\n\nDESCRIPTION: Final = (\n    \"Give every comment of a scan its one verdict, from the layers that decided without a \"\n    \"model and from the model, counting how many each decided and what the model was asked.\"\n)\n\nVERDICT_SCHEMA: Final[JsonObject] = {\n    \"type\": \"object\",\n    \"properties\": {\n        \"comment_id\": {\"type\": \"string\"},\n        \"verdict\": {\"enum\": [\"friendly\", \"hostile\", \"uncertain\"]},\n        \"layer\": {\"type\": \"string\"},\n        \"source\": {\"type\": [\"string\", \"null\"]},\n    },\n    \"required\": [\"comment_id\", \"verdict\", \"layer\", \"source\"],\n}\n\nINPUT_SCHEMA: Final[JsonObject] = {\n    \"type\": \"object\",\n    \"properties\": {\n        \"resolution\": {\"type\": \"object\"},\n        \"judged\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}},\n        \"recorded\": {\"type\": \"object\"},\n    },\n    \"required\": [\"resolution\", \"judged\", \"recorded\"],\n}\n\nOUTPUT_SCHEMA: Final[JsonObject] = {\n    \"type\": \"object\",\n    \"properties\": {\n        \"outcome\": {\n            \"type\": \"object\",\n            \"properties\": {\n                \"platform\": {\"type\": \"string\"},\n                \"post_id\": {\"type\": \"string\"},\n                \"policy\": {\"type\": \"string\"},\n                \"verdicts\": {\"type\": \"array\", \"items\": VERDICT_SCHEMA},\n                \"layers\": {\"type\": \"object\", \"additionalProperties\": {\"type\": \"integer\"}},\n                \"model\": {\n                    \"type\": \"object\",\n                    \"properties\": {\n                        \"groups\": {\"type\": \"integer\"},\n                        \"unreadable\": {\"type\": \"integer\"},\n                    },\n                    \"required\": [\"groups\", \"unreadable\"],\n                },\n                \"undescribed_media\": {\"type\": \"array\"},\n            },\n            \"required\": [\n                \"platform\",\n                \"post_id\",\n                \"policy\",\n                \"verdicts\",\n                \"layers\",\n                \"model\",\n                \"undescribed_media\",\n            ],\n        }\n    },\n    \"required\": [\"outcome\"],\n}\n\n\ndef run(\n    inputs: JsonObject,\n) -> JsonObject:\n    \"\"\"Return every comment's verdict, and how each was reached.\"\"\"\n\n    resolution: JsonObject = inputs[\"resolution\"]\n    judged: list[JsonObject] = list(inputs[\"judged\"])\n    by_model: list[JsonObject] = list(inputs[\"recorded\"].get(\"resolved\") or ())\n\n    verdicts = [*resolution[\"resolved\"], *by_model]\n    layers = dict(resolution.get(\"layers\") or {})\n\n    if by_model:\n        layers[\"model\"] = len(by_model)\n\n    return {\n        \"outcome\": {\n            \"platform\": resolution[\"platform\"],\n            \"post_id\": resolution[\"post_id\"],\n            \"policy\": resolution[\"policy\"],\n            \"verdicts\": verdicts,\n            \"layers\": layers,\n            \"model\": {\n                \"groups\": len(judged),\n                \"unreadable\": sum(1 for group in judged if group.get(\"valid\") is False),\n            },\n            \"undescribed_media\": list(resolution.get(\"undescribed_media\") or ()),\n        }\n    }\n\n\nif __name__ == \"__main__\":\n    main(run)\n",
+      "command": [
+        "python"
+      ],
+      "timeout_seconds": 60.0
+    }
+  ],
+  "test_cases": []
+}

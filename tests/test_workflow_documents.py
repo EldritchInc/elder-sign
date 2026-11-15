@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+import azathoth.standard
 import pytest
 from azathoth.tools import decode_tool_document
 from azathoth.workflows import (
@@ -19,6 +20,9 @@ from elder_sign.build import DOCUMENTS
 from elder_sign.policy import TRANSPHOBIC_HARASSMENT
 
 WORKFLOWS = DOCUMENTS.parent / "workflows"
+
+STANDARD_TOOLS = Path(azathoth.standard.__file__).parent / "tools"
+"""The standard tools Azathoth ships, which `azathoth init` installs."""
 
 SHIPPED = sorted(WORKFLOWS.glob("*.json"))
 
@@ -67,11 +71,14 @@ def workflow(
 
 
 def shipped_tools() -> dict[str, tuple[str, str]]:
-    """Return every shipped tool's version and runtime, by name."""
+    """Return the version and runtime of every tool a workflow may require, by name.
+
+    Those are Elder Sign's own, and the standard tools `azathoth init` installs.
+    """
 
     tools = {}
 
-    for path in sorted(DOCUMENTS.glob("*.json")):
+    for path in (*sorted(STANDARD_TOOLS.glob("*.json")), *sorted(DOCUMENTS.glob("*.json"))):
         document = decode_tool_document(path.read_text(encoding="utf-8"))
         (implementation,) = document.implementations
         tools[document.definition.name] = (document.definition.version, implementation.runtime)
@@ -171,7 +178,9 @@ def test_every_workflow_judges_under_the_default_policy() -> None:
                     settings = binding.source.value
 
                     assert isinstance(settings, dict)
-                    assert settings["policy"] == TRANSPHOBIC_HARASSMENT, path.name
+
+                    if "policy" in settings:
+                        assert settings["policy"] == TRANSPHOBIC_HARASSMENT, path.name
 
 
 def test_resolve_comments_asks_no_model() -> None:

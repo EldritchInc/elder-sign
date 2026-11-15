@@ -1,0 +1,280 @@
+{
+  "metadata": {
+    "id": "e1de7516-0000-4000-8000-000000000400",
+    "name": "moderate scan",
+    "description": "Judge every comment of one scan of a post under the transphobic-harassment policy: decide what trusted and blocked authors, blocked terms and remembered verdicts can, ask classify-comment about each distinct comment that is left, remember what it says, and give every comment its one verdict.",
+    "version": "1.0.0"
+  },
+  "steps": [
+    {
+      "id": "e1de7516-0000-4000-8000-000000000401",
+      "specification": {
+        "requirement": {
+          "name": "normalize_comments",
+          "version": "1.0.0",
+          "runtime": "process"
+        }
+      },
+      "depends_on": [],
+      "inputs": [
+        {
+          "name": "scan",
+          "source": {
+            "event_type": "workflow.input.received",
+            "field_name": "input"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "keyed_scan",
+          "path": [
+            "scan"
+          ]
+        }
+      ],
+      "conditions": [],
+      "retry_policy": {
+        "max_attempts": 1,
+        "initial_delay_seconds": 0.0,
+        "backoff_multiplier": 1.0,
+        "maximum_delay_seconds": null
+      },
+      "failure_policy": "fail_workflow"
+    },
+    {
+      "id": "e1de7516-0000-4000-8000-000000000402",
+      "specification": {
+        "requirement": {
+          "name": "lookup_verdicts",
+          "version": "1.1.0",
+          "runtime": "process"
+        }
+      },
+      "depends_on": [
+        "e1de7516-0000-4000-8000-000000000401"
+      ],
+      "inputs": [
+        {
+          "name": "scan",
+          "source": {
+            "name": "keyed_scan"
+          }
+        },
+        {
+          "name": "settings",
+          "source": {
+            "value": {
+              "policy": "transphobic-harassment"
+            }
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "resolution",
+          "path": [
+            "resolution"
+          ]
+        },
+        {
+          "name": "groups",
+          "path": [
+            "resolution",
+            "needs_inference"
+          ]
+        }
+      ],
+      "conditions": [],
+      "retry_policy": {
+        "max_attempts": 2,
+        "initial_delay_seconds": 0.0,
+        "backoff_multiplier": 1.0,
+        "maximum_delay_seconds": null
+      },
+      "failure_policy": "fail_workflow"
+    },
+    {
+      "id": "e1de7516-0000-4000-8000-000000000403",
+      "specification": {
+        "requirement": {
+          "name": "map_workflow",
+          "version": "1.0.0",
+          "runtime": "process"
+        }
+      },
+      "depends_on": [
+        "e1de7516-0000-4000-8000-000000000402"
+      ],
+      "inputs": [
+        {
+          "name": "settings",
+          "source": {
+            "value": {
+              "workflow_id": "e1de7516-0000-4000-8000-000000000300",
+              "max_items": 500,
+              "max_concurrency": 4
+            }
+          }
+        },
+        {
+          "name": "items",
+          "source": {
+            "name": "groups"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "results",
+          "path": [
+            "results"
+          ]
+        }
+      ],
+      "conditions": [],
+      "retry_policy": {
+        "max_attempts": 1,
+        "initial_delay_seconds": 0.0,
+        "backoff_multiplier": 1.0,
+        "maximum_delay_seconds": null
+      },
+      "failure_policy": "fail_workflow",
+      "message": "Asking about the comments nothing else could decide"
+    },
+    {
+      "id": "e1de7516-0000-4000-8000-000000000404",
+      "specification": {
+        "requirement": {
+          "name": "unwrap_results",
+          "version": "1.0.0",
+          "runtime": "process"
+        }
+      },
+      "depends_on": [
+        "e1de7516-0000-4000-8000-000000000403"
+      ],
+      "inputs": [
+        {
+          "name": "results",
+          "source": {
+            "name": "results"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "judged",
+          "path": [
+            "items"
+          ]
+        }
+      ],
+      "conditions": [],
+      "retry_policy": {
+        "max_attempts": 1,
+        "initial_delay_seconds": 0.0,
+        "backoff_multiplier": 1.0,
+        "maximum_delay_seconds": null
+      },
+      "failure_policy": "fail_workflow"
+    },
+    {
+      "id": "e1de7516-0000-4000-8000-000000000405",
+      "specification": {
+        "requirement": {
+          "name": "record_verdicts",
+          "version": "1.0.0",
+          "runtime": "process"
+        }
+      },
+      "depends_on": [
+        "e1de7516-0000-4000-8000-000000000404"
+      ],
+      "inputs": [
+        {
+          "name": "judged",
+          "source": {
+            "name": "judged"
+          }
+        },
+        {
+          "name": "settings",
+          "source": {
+            "value": {
+              "policy": "transphobic-harassment"
+            }
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "recorded",
+          "path": []
+        }
+      ],
+      "conditions": [],
+      "retry_policy": {
+        "max_attempts": 2,
+        "initial_delay_seconds": 0.0,
+        "backoff_multiplier": 1.0,
+        "maximum_delay_seconds": null
+      },
+      "failure_policy": "fail_workflow"
+    },
+    {
+      "id": "e1de7516-0000-4000-8000-000000000406",
+      "specification": {
+        "requirement": {
+          "name": "combine_verdicts",
+          "version": "1.0.0",
+          "runtime": "process"
+        }
+      },
+      "depends_on": [
+        "e1de7516-0000-4000-8000-000000000402",
+        "e1de7516-0000-4000-8000-000000000404",
+        "e1de7516-0000-4000-8000-000000000405"
+      ],
+      "inputs": [
+        {
+          "name": "resolution",
+          "source": {
+            "name": "resolution"
+          }
+        },
+        {
+          "name": "judged",
+          "source": {
+            "name": "judged"
+          }
+        },
+        {
+          "name": "recorded",
+          "source": {
+            "name": "recorded"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "outcome",
+          "path": [
+            "outcome"
+          ]
+        }
+      ],
+      "conditions": [],
+      "retry_policy": {
+        "max_attempts": 1,
+        "initial_delay_seconds": 0.0,
+        "backoff_multiplier": 1.0,
+        "maximum_delay_seconds": null
+      },
+      "failure_policy": "fail_workflow"
+    }
+  ],
+  "result": {
+    "name": "outcome"
+  }
+}
