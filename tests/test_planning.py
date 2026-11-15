@@ -27,6 +27,8 @@ def comment(
     author: str = "someone",
     created_at: str | None = OLD,
     hidden: bool = False,
+    author_name: str | None = None,
+    mentions: list[str] | None = None,
 ) -> dict[str, Any]:
     """Return one comment of a scan."""
 
@@ -34,9 +36,15 @@ def comment(
         "id": comment_id,
         "parent_id": parent,
         "author_id": author,
+        "author_name": author_name,
+        "mentions": mentions or [],
         "created_at": created_at,
         "hidden": hidden,
     }
+
+
+HERS = comment("h1", author="me", author_name="Eris Discordia Montano")
+"""A comment of hers, so the planner knows her name."""
 
 
 def verdict(
@@ -119,6 +127,60 @@ def test_what_is_uncertain_is_left_for_the_person_and_what_is_friendly_alone() -
 
 def test_a_comment_without_a_verdict_is_never_acted_on() -> None:
     assert actions(planned([comment("held")], [])) == []
+
+
+# Only what is aimed at her is deleted
+
+
+def test_hostility_aimed_at_her_anywhere_is_deleted() -> None:
+    result = planned(
+        [
+            HERS,
+            comment("c1"),
+            comment("c2", parent="h1"),
+            comment("c3", parent="c1", mentions=["eris discordia montano"]),
+        ],
+        [verdict(cid, "hostile", anywhere=True) for cid in ("c1", "c2", "c3")],
+    )
+
+    assert sorted(actions(result)) == [("c1", "delete"), ("c2", "delete"), ("c3", "delete")]
+
+
+def test_hostility_between_commenters_is_hidden_never_deleted() -> None:
+    result = planned(
+        [
+            HERS,
+            comment("c1", author="ally"),
+            comment("c2", parent="c1", mentions=["Paul Armer"]),
+            comment("c3", parent="c1"),
+            comment("c4", parent="h1", mentions=["Jeffy Jeff"]),
+        ],
+        [verdict(cid, "hostile", anywhere=True) for cid in ("c2", "c3", "c4")],
+    )
+
+    assert actions(result) == [("c2", "hide"), ("c3", "hide"), ("c4", "hide")]
+
+
+def test_a_reply_naming_her_and_someone_else_is_aimed_at_her() -> None:
+    result = planned(
+        [
+            HERS,
+            comment("c1"),
+            comment("c2", parent="c1", mentions=["Kim", "Eris Discordia Montano"]),
+        ],
+        [verdict("c2", "hostile", anywhere=True)],
+    )
+
+    assert actions(result) == [("c2", "delete")]
+
+
+def test_without_her_name_a_reply_naming_anyone_is_only_hidden() -> None:
+    result = planned(
+        [comment("c1"), comment("c2", parent="c1", mentions=["Eris Discordia Montano"])],
+        [verdict("c2", "hostile", anywhere=True)],
+    )
+
+    assert actions(result) == [("c2", "hide")]
 
 
 # Never touched
@@ -212,8 +274,15 @@ def test_an_uncertain_hidden_comment_stays_hidden_and_is_left_for_the_person() -
 
 
 def test_replies_are_deleted_before_what_they_reply_to() -> None:
+    naming_her = ["Eris Discordia Montano"]
     result = planned(
-        [comment("c1"), comment("c2", parent="c1"), comment("c3", parent="c2"), comment("c4")],
+        [
+            HERS,
+            comment("c1"),
+            comment("c2", parent="c1", mentions=naming_her),
+            comment("c3", parent="c2", mentions=naming_her),
+            comment("c4"),
+        ],
         [verdict(cid, "hostile", anywhere=True) for cid in ("c1", "c2", "c3", "c4")],
     )
 

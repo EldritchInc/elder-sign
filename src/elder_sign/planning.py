@@ -4,10 +4,14 @@ The planner is given a scan, the outcome `judge` reached for it, and the
 time, and decides, comment by comment:
 
 - what is **hostile anywhere**, decided by its content, a blocked term, its
-  media, or a model that said it holds wherever it is posted, is deleted, or
-  hidden when deleting is off;
-- what is **hostile only in its context**, or by a known troll, is hidden,
-  which can be undone, so an ally misread in a heated thread is never deleted;
+  media, or a model that said it holds wherever it is posted, and **aimed at
+  her**, is deleted, or hidden when deleting is off. A comment is aimed at
+  her when it names her, or names no one and is top-level on her post or a
+  reply to her comment. A reply that names someone else is aimed at them;
+- everything else **hostile**, in its context, by a known troll, or in an
+  argument between commenters, is hidden, which can be undone: a model's
+  word that hostility holds anywhere is not enough to delete an ally it
+  misread in a heated thread;
 - what is **uncertain** is left for the person to decide;
 - what is **friendly** is left alone, and unhidden when a keyword filter hid it,
   in dry run unless unhiding is turned on;
@@ -119,6 +123,29 @@ def _depth(
     return depth
 
 
+def aimed_at_her(
+    comment: Comment,
+    comments: dict[str, Comment],
+    owner: str | None,
+    her_names: set[str],
+) -> bool:
+    """Return whether a comment is aimed at her rather than at another commenter."""
+
+    named = {str(name).strip().casefold() for name in comment.get("mentions") or ()}
+
+    if named:
+        return bool(named & her_names)
+
+    parent_id = comment["parent_id"]
+
+    if parent_id is None:
+        return True
+
+    parent = comments.get(parent_id)
+
+    return parent is not None and owner is not None and parent["author_id"] == owner
+
+
 def _created(
     comment: Comment,
 ) -> datetime | None:
@@ -145,6 +172,11 @@ def plan(
     comments = {comment["id"]: comment for comment in scan["comments"]}
     parents = {comment["id"]: comment["parent_id"] for comment in scan["comments"]}
     owner = scan.get("owner_id")
+    her_names = {
+        str(found.get("author_name")).strip().casefold()
+        for found in scan["comments"]
+        if owner and found["author_id"] == owner and found.get("author_name")
+    }
     deletes: list[Action] = []
     hides: list[Action] = []
     unhides: list[Action] = []
@@ -177,7 +209,11 @@ def plan(
             waiting.append(comment_id)
             continue
 
-        if entry.get("anywhere") is True and settings.delete:
+        if (
+            entry.get("anywhere") is True
+            and settings.delete
+            and aimed_at_her(found, comments, owner, her_names)
+        ):
             deletes.append(Action(comment_id, "delete", layer))
         elif not hidden:
             hides.append(Action(comment_id, "hide", layer))
