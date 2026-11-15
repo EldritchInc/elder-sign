@@ -8,8 +8,9 @@ what it reads by what it is, wherever it sits:
 - a **comment** is any object of `__typename` `Comment` with an `id`, an
   `author` and a `created_time`. A reply names its parent in
   `comment_direct_parent`; its words are `body.text`, the people it mentions
-  are `body.ranges`, as UTF-16 offsets into those words, and its GIFs,
-  stickers and photos are its `attachments`;
+  are `body.ranges`, as UTF-16 offsets into those words, its GIFs,
+  stickers and photos are its `attachments`, and `is_hidden_by_viewer` says
+  it is hidden from everyone else, by the person or by their keyword filter;
 - a **post** is any object with a `post_id`: beside it, one object holds its
   reel's `url` and its `feedback.total_comment_count`, which counts replies
   too, and another its `creation_time`.
@@ -215,8 +216,10 @@ def media_of(
 
 def comment_of(
     node: dict[str, Any],
+    *,
+    hidden: bool = False,
 ) -> Comment:
-    """Return one comment node as the scan's comment."""
+    """Return one comment node as the scan's comment, hidden if any copy of it said so."""
 
     author: dict[str, Any] = node["author"]
     given = node.get("body")
@@ -237,6 +240,7 @@ def comment_of(
             item for item in (media_of(entry) for entry in node.get("attachments") or []) if item
         ],
         "created_at": created_at(int(node["created_time"])),
+        "hidden": hidden or node.get("is_hidden_by_viewer") is True,
     }
 
     return comment
@@ -248,10 +252,12 @@ def comments_in(
     """Return every comment a capture holds, each once, in the order it first appears.
 
     A comment Facebook sends twice, as it does when a reply is loaded again
-    under its parent, is read from the fuller of its copies.
+    under its parent, or a thread again under "Hidden by You", is read from
+    the fuller of its copies, and is hidden if any copy says it is.
     """
 
     nodes: dict[str, dict[str, Any]] = {}
+    hidden: set[str] = set()
 
     for payload in payloads(records):
         for value in objects(payload):
@@ -260,10 +266,30 @@ def comments_in(
 
             seen = nodes.get(value["id"])
 
+            if value.get("is_hidden_by_viewer") is True:
+                hidden.add(value["id"])
+
             if seen is None or len(value) > len(seen):
                 nodes[value["id"]] = value
 
-    return [comment_of(node) for node in nodes.values()]
+    return [comment_of(node, hidden=comment_id in hidden) for comment_id, node in nodes.items()]
+
+
+def filtering_notices(
+    records: Iterable[dict[str, Any]],
+) -> list[str]:
+    """Return every notice Facebook gives that it filtered comments out of what it shows."""
+
+    notices = []
+
+    for payload in payloads(records):
+        for value in objects(payload):
+            notice = value.get("filtering_footer_string")
+
+            if isinstance(notice, str) and notice.strip() and notice.strip() not in notices:
+                notices.append(notice.strip())
+
+    return notices
 
 
 def post_id_of(

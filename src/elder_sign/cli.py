@@ -159,6 +159,7 @@ def _scan(
     try:
         with facebook_reader.facebook(_settings(options), keep_capture=kept) as platform:
             scan = platform.scan(post)
+            notices = platform.notices
     except BrowserError as exc:
         print(exc, file=sys.stderr)
         return 1
@@ -168,11 +169,21 @@ def _scan(
     comments = scan["comments"]
     replies = sum(1 for comment in comments if comment["parent_id"] is not None)
     media = sum(1 for comment in comments if comment.get("media"))
+    hidden = sum(1 for comment in comments if comment.get("hidden"))
+    counted = scan.get("comment_count")
 
     print(
         f"Read {len(comments)} comments on reel {reel_id}: {len(comments) - replies} top-level, "
         f"{replies} replies, {media} with a GIF, sticker or image."
     )
+    print(
+        f"{len(comments) - hidden} visible + {hidden} hidden = {len(comments)}; "
+        f"Facebook counts {counted if counted is not None else 'none'}."
+    )
+
+    for notice in notices:
+        print(f"Facebook says: {notice}")
+
     print(f"Kept in {output}, readable by you alone: it holds real names and comments.")
 
     if kept is not None:

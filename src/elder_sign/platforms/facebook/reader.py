@@ -15,9 +15,12 @@ capture, so everything here but the clicking is proven without Facebook.
   fresh visit after that, so a fingerprint taken after cleaning is the
   reel as it is then.
 - **A scan** opens the reel, shows all comments rather than the most relevant,
-  and opens every "View more comments" and "View replies" there is. Facebook
-  plays other people's reels beside the person's, so only the comments on the
-  reel's own post are kept.
+  and opens every "View more comments" and "View replies" there is; then it
+  shows the comments "Hidden by You", by the person or by their keyword
+  filter, and opens those. Facebook plays other people's reels beside the
+  person's, so only the comments on the reel's own post are kept. The scan
+  says how many comments Facebook counts, so what was read can be checked
+  against it.
 """
 
 import re
@@ -42,6 +45,7 @@ from elder_sign.platforms.facebook.parse import (
     REEL_PATH,
     PostDetails,
     comments_in,
+    filtering_notices,
     post_id_of,
     posts_in,
 )
@@ -108,6 +112,8 @@ class FacebookPlatform:
         self._now = now
         self._older_tolerance = older_tolerance
         self._visits: dict[str, Records] = {}
+        self.notices: list[str] = []
+        """What Facebook said, in the last scan, of comments it filtered out of view."""
 
     def _visit(
         self,
@@ -219,8 +225,11 @@ class FacebookPlatform:
         details = self.details_of(post.post_id, visited)
         count = details.comment_count if details else None
         records = visited + self._browser.expand(count)
+        self.notices = filtering_notices(records)
+        scan = self._own_comments(post.post_id, records)
+        scan["comment_count"] = count
 
-        return self._own_comments(post.post_id, records)
+        return scan
 
     def fetch_media(
         self,
@@ -232,6 +241,11 @@ class FacebookPlatform:
 
 
 EXPANDERS: Final = (
+    re.compile(
+        r"^(?:View|See|Show) (?:all |more )?(?:\d+ )?(?:hidden|filtered) "
+        r"(?:comments?|repl(?:y|ies))\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"^View (?:all |more |previous )?(?:\d+ )?(?:more )?comments?\b", re.IGNORECASE),
     re.compile(r"^View (?:all |more )?(?:\d+ )?(?:more )?repl(?:y|ies)\b", re.IGNORECASE),
     re.compile(r"^\d+ (?:more )?repl(?:y|ies)$", re.IGNORECASE),
@@ -259,7 +273,9 @@ def opens_comments(
     return re.compile(rf"^Comments?, {comment_count:,} {noun}$", re.IGNORECASE)
 
 
-SORTING: Final = re.compile(r"^(?:Most relevant|Newest|All comments|Top comments)$", re.IGNORECASE)
+SORTING: Final = re.compile(
+    r"^(?:Most relevant|Newest|All comments|Top comments|Hidden by You)$", re.IGNORECASE
+)
 """The name of the button that chooses which comments a reel shows."""
 
 QUIET_SCROLLS: Final = 2
@@ -270,6 +286,9 @@ SCROLL_MILLISECONDS: Final = 800
 
 STALE_CLICKS: Final = 2
 """How many clicks of one button that bring nothing new before it is given up on."""
+
+HIDDEN_BY_YOU: Final = re.compile(r"^Hidden by You\b", re.IGNORECASE)
+"""The choice that shows the comments the person hid, or their keyword filter hid for them."""
 
 ALL_COMMENTS: Final = re.compile(r"^All comments\b", re.IGNORECASE)
 """The choice that shows every comment, rather than only those Facebook ranks highest."""
@@ -393,32 +412,34 @@ class PlaywrightBrowser:
         self._settle()
         self._pacer.pause(0.6)
 
-    def _show_all_comments(self) -> None:
-        """Choose to see every comment, when the reel offers the choice."""
+    def _choose(
+        self,
+        choice: re.Pattern[str],
+    ) -> bool:
+        """Choose which comments the reel shows, and return whether the choice was there."""
 
         sorting = self._visible("button", SORTING)
 
         if sorting is None:
-            return
+            return False
 
         sorting.click()
         self._pacer.pause(0.5)
-        everything = self._visible("menuitem", ALL_COMMENTS)
+        option = self._visible("menuitem", choice)
 
-        if everything is not None:
-            everything.click()
-            self._settle()
-            self._pacer.pause(0.5)
+        if option is None:
+            self._page.keyboard.press("Escape")
+            return False
 
-    def expand(
-        self,
-        comment_count: int | None = None,
-    ) -> Records:
-        """Open every folded comment and reply, paced, and return what was sent while doing it."""
+        option.click()
+        self._settle()
+        self._pacer.pause(0.5)
 
-        start = len(self._recorder.records)
-        self.open_comments(comment_count)
-        self._show_all_comments()
+        return True
+
+    def _open_folds(self) -> None:
+        """Open every folded comment and reply shown, giving up on any that bring nothing."""
+
         stale: Counter[str] = Counter()
 
         for _ in range(self._max_expansions):
@@ -442,6 +463,24 @@ class PlaywrightBrowser:
 
             if len(self._recorder.records) == before:
                 stale[text] += 1
+
+    def expand(
+        self,
+        comment_count: int | None = None,
+    ) -> Records:
+        """Open every comment, then every hidden one, paced, and return what was sent meanwhile.
+
+        All comments are shown and every fold opened; then the comments hidden
+        by the person, or by their keyword filter, are shown and opened too.
+        """
+
+        start = len(self._recorder.records)
+        self.open_comments(comment_count)
+        self._choose(ALL_COMMENTS)
+        self._open_folds()
+
+        if self._choose(HIDDEN_BY_YOU):
+            self._open_folds()
 
         return self._since(start)
 

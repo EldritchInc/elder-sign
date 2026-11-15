@@ -42,6 +42,13 @@ class Comment(TypedDict):
     mentions: NotRequired[list[str]]
     media: NotRequired[list[MediaItem]]
     created_at: NotRequired[str | None]
+    hidden: NotRequired[bool]
+    """Whether the comment is hidden from everyone but its author, their friends and the person.
+
+    The person may have hidden it, or the platform did for them, as a keyword
+    filter does. A hidden comment is judged like any other: a friendly one can
+    be unhidden, and a hostile one is never hidden again.
+    """
 
 
 class Scan(TypedDict):
@@ -50,6 +57,8 @@ class Scan(TypedDict):
     platform: str
     post_id: str
     comments: list[Comment]
+    comment_count: NotRequired[int | None]
+    """How many comments the platform counts on the post: replies, hidden and deleted included."""
 
 
 @dataclass(frozen=True)

@@ -19,6 +19,7 @@ from elder_sign.platforms.facebook.parse import (
     comment_counts,
     comments_in,
     created_at,
+    filtering_notices,
     media_of,
     mentions_of,
     post_id_of,
@@ -302,3 +303,37 @@ def test_the_canary_reels_post_is_known_by_its_reel() -> None:
     assert own.comment_count == 5
     assert own.created == datetime(2026, 11, 15, 4, 26, 23, tzinfo=UTC)
     assert {post_id_of(comment["id"]) for comment in comments_in(canary())} == {own.post_id}
+
+
+# Hidden comments
+
+
+def test_a_comment_hidden_from_everyone_else_is_marked_hidden() -> None:
+    hidden, shown = comments_in(
+        records(node(id="h1", is_hidden_by_viewer=True), node(id="s1", is_hidden_by_viewer=False))
+    )
+
+    assert (hidden["hidden"], shown["hidden"]) == (True, False)
+
+
+def test_a_comment_is_hidden_if_any_copy_of_it_says_so() -> None:
+    fuller = node(is_hidden_by_viewer=False, depth=0, legacy_fbid="1", attachments=[])
+
+    (comment,) = comments_in(records(node(is_hidden_by_viewer=True), fuller))
+
+    assert comment["hidden"] is True
+
+
+def test_the_canary_has_no_hidden_comments() -> None:
+    assert not any(comment.get("hidden") for comment in comments_in(canary()))
+
+
+def test_facebooks_notices_of_filtered_comments_are_read_once_each() -> None:
+    payload = [
+        {"filtering_footer_string": ""},
+        {"filtering_footer_string": "Some comments may have been filtered."},
+        {"x": {"filtering_footer_string": "Some comments may have been filtered."}},
+    ]
+
+    assert filtering_notices(records(payload)) == ["Some comments may have been filtered."]
+    assert filtering_notices(canary()) == []

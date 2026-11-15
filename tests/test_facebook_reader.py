@@ -21,9 +21,12 @@ from elder_sign.browser import BrowserSettings, Pacer, open_browser
 from elder_sign.platforms import Platform, Post
 from elder_sign.platforms.facebook.parse import comments_in, post_id_of, posts_in
 from elder_sign.platforms.facebook.reader import (
+    EXPANDERS,
+    HIDDEN_BY_YOU,
     OPEN_COMMENTS,
     REEL_URL,
     REELS_TAB,
+    SORTING,
     FacebookPlatform,
     PlaywrightBrowser,
     opens_comments,
@@ -220,6 +223,8 @@ def test_a_scan_opens_the_reel_expands_it_and_keeps_only_its_own_comments() -> N
 
     assert browser.expansions == 1
     assert browser.counts == [5]
+    assert scan.get("comment_count") == 5
+    assert platform.notices == []
     assert scan["platform"] == "facebook"
     assert scan["post_id"] == reel
     assert len(scan["comments"]) == 5
@@ -236,7 +241,12 @@ PAGE = """<html><body>
 <div role="button" aria-label="Comment, 5 comments" id="open">💬</div>
 <div id="pane" hidden>
 <button id="sort">Most relevant</button>
-<div id="menu" hidden><div role="menuitem" id="all">All comments</div></div>
+<div id="menu" hidden>
+<div role="menuitem" id="all">All comments Show all comments, including potential spam.</div>
+<div role="menuitem" id="mine">Hidden by You Show your hidden comments in their original context
+from the post. Only you can see this.</div>
+</div>
+<div id="hiddenpane" hidden><div role="button" id="hiddenreply">View 1 hidden reply</div></div>
 <div role="button" id="replies">View 1 reply</div>
 <div role="button" id="comments">View more comments</div>
 <div role="button" id="dead">View 2 replies</div>
@@ -251,6 +261,11 @@ document.getElementById('open').onclick = () => { ask('CommentsRightRailQuery');
 document.getElementById('sort').onclick = () => { document.getElementById('menu').hidden = false; };
 document.getElementById('all').onclick = () => { ask('AllCommentsQuery');
   document.getElementById('menu').hidden = true; };
+document.getElementById('mine').onclick = () => { ask('HiddenByYouQuery');
+  document.getElementById('menu').hidden = true;
+  document.getElementById('hiddenpane').hidden = false; };
+document.getElementById('hiddenreply').onclick = e => { ask('HiddenRepliesQuery');
+  e.target.remove(); };
 document.getElementById('replies').onclick = e => { ask('Depth1CommentsListPaginationQuery');
   e.target.remove(); };
 document.getElementById('comments').onclick = e => { ask('CommentsListPaginationQuery');
@@ -321,7 +336,11 @@ def test_a_real_browser_opens_the_comments_shows_all_opens_every_fold_and_finds_
     assert "NextReelCommentsQuery" not in names
     assert [record["kind"] for record in visited] == ["document"]
     assert names[:2] == ["CommentsRightRailQuery", "AllCommentsQuery"]
-    assert sorted(names[2:]) == ["CommentsListPaginationQuery", "Depth1CommentsListPaginationQuery"]
+    assert sorted(names[2:4]) == [
+        "CommentsListPaginationQuery",
+        "Depth1CommentsListPaginationQuery",
+    ]
+    assert names[4:] == ["HiddenByYouQuery", "HiddenRepliesQuery"]
     assert json.dumps(expanded).count("Depth1CommentsListPaginationQuery") == 1
 
 
@@ -381,6 +400,7 @@ def test_the_scan_command_keeps_what_it_read_where_only_its_owner_can_read_it(
     scan = json.loads(out.read_text())
 
     assert "Read 5 comments" in printed
+    assert "5 visible + 0 hidden = 5; Facebook counts 5." in printed
     assert "Everything Facebook sent" not in printed
     assert "4 top-level, 1 replies, 1 with a GIF" in printed
     assert len(scan["comments"]) == 5
@@ -427,3 +447,26 @@ def test_a_reels_own_button_is_the_one_named_with_its_count() -> None:
     assert not opens_comments(5).match("Comment, 192 comments")
     assert opens_comments(1).match("Comment, 1 comment")
     assert opens_comments(1234).match("Comment, 1,234 comments")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "View hidden comments",
+        "See 3 filtered comments",
+        "Show hidden replies",
+        "View 1 hidden reply",
+    ],
+)
+def test_buttons_that_show_hidden_or_filtered_comments_are_opened_too(
+    name: str,
+) -> None:
+    assert any(pattern.match(name) for pattern in EXPANDERS)
+
+
+def test_the_choice_of_hidden_comments_is_known_by_its_name() -> None:
+    assert HIDDEN_BY_YOU.match(
+        "Hidden by You Show your hidden comments in their original context from the post."
+    )
+    assert not HIDDEN_BY_YOU.match("All comments Show all comments, including potential spam.")
+    assert SORTING.match("Hidden by You")
