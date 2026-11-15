@@ -2,14 +2,18 @@
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from elder_sign import scrub
 from elder_sign.browser import BrowserError, BrowserSettings, profile_path
+from elder_sign.platforms import Post
 from elder_sign.platforms.facebook import capture as facebook_capture
+from elder_sign.platforms.facebook import reader as facebook_reader
 from elder_sign.platforms.facebook import session as facebook_session
+from elder_sign.platforms.facebook.parse import REEL_PATH
 
 PLATFORMS = ("facebook",)
 
@@ -96,6 +100,98 @@ def _scrub(
     return 0
 
 
+def _settings(
+    options: argparse.Namespace,
+) -> BrowserSettings:
+    """Return the browser a command reads through: shown, unless it was asked to hide."""
+
+    return BrowserSettings(profile=profile_path(), headless=bool(getattr(options, "hidden", False)))
+
+
+def _read(
+    options: argparse.Namespace,
+) -> int:
+    """List the person's recent reels, with each one's comment count, changing nothing."""
+
+    try:
+        with facebook_reader.facebook(_settings(options)) as platform:
+            posts = platform.recent_posts(options.days)
+
+            for post in posts:
+                fingerprint = platform.fingerprint(post)
+                published = post.published_at.date().isoformat() if post.published_at else "?"
+                print(
+                    f"{post.post_id}  published {published}  "
+                    f"{fingerprint.comment_count} comments  newest {fingerprint.newest_comment_id}"
+                )
+    except BrowserError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+    print(f"{len(posts)} reels from the last {options.days} days.")
+
+    return 0
+
+
+def _scan(
+    options: argparse.Namespace,
+) -> int:
+    """Read every comment and reply on one reel, and keep them where only their owner can read."""
+
+    found = REEL_PATH.search(options.url)
+
+    if found is None:
+        print(f"{options.url} is not a link to a reel.", file=sys.stderr)
+        return 1
+
+    reel_id = found.group(1)
+    post = Post(
+        platform="facebook", post_id=reel_id, url=facebook_reader.REEL_URL.format(reel_id=reel_id)
+    )
+
+    try:
+        with facebook_reader.facebook(_settings(options)) as platform:
+            scan = platform.scan(post)
+    except BrowserError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+    output = Path(options.out) if options.out else scans_path() / f"facebook-{reel_id}.json"
+    write_private(output, json.dumps(scan, ensure_ascii=False, indent=2) + "\n")
+    comments = scan["comments"]
+    replies = sum(1 for comment in comments if comment["parent_id"] is not None)
+    media = sum(1 for comment in comments if comment.get("media"))
+
+    print(
+        f"Read {len(comments)} comments on reel {reel_id}: {len(comments) - replies} top-level, "
+        f"{replies} replies, {media} with a GIF, sticker or image."
+    )
+    print(f"Kept in {output}, readable by you alone: it holds real names and comments.")
+
+    return 0
+
+
+def scans_path() -> Path:
+    """Return where scans are kept: `~/.elder-sign/scans`."""
+
+    return Path.home() / ".elder-sign" / "scans"
+
+
+def write_private(
+    path: Path,
+    text: str,
+) -> None:
+    """Write a file readable and writable by its owner alone."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        stream.write(text)
+
+    os.chmod(path, 0o600)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Return the parser of every `elder-sign` command."""
 
@@ -131,6 +227,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Keep every response, not only those about comments.",
     )
 
+    reading = commands.add_parser(
+        "read",
+        help="List your recent reels and their comment counts, changing nothing.",
+    )
+    reading.add_argument("platform", choices=PLATFORMS)
+    reading.add_argument("--days", type=int, default=30, help="How far back to look.")
+    reading.add_argument("--hidden", action="store_true", help="Keep the browser window hidden.")
+
+    scanning = commands.add_parser(
+        "scan",
+        help="Read every comment and reply on one reel, changing nothing.",
+    )
+    scanning.add_argument("platform", choices=PLATFORMS)
+    scanning.add_argument("url", help="The reel's link.")
+    scanning.add_argument("--out", help="Where to keep the comments read.")
+    scanning.add_argument("--hidden", action="store_true", help="Keep the browser window hidden.")
+
     return parser
 
 
@@ -151,6 +264,12 @@ def main(
 
     if options.command == "scrub":
         return _scrub(options)
+
+    if options.command == "read":
+        return _read(options)
+
+    if options.command == "scan":
+        return _scan(options)
 
     return 2
 

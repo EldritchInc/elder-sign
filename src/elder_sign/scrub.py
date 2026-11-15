@@ -172,8 +172,11 @@ def holds_an_id(
 COUNT_KEY: Final = "total_comment_count"
 """The key a post's comment count is kept under."""
 
-COMMENT_MARKERS: Final = ('"__typename": "Comment"', f'"{COUNT_KEY}"')
-"""What a payload about comments holds: a comment, or a post's comment count."""
+CREATED_KEY: Final = "creation_time"
+"""The key a post's time of publishing is kept under, beside its `post_id`."""
+
+COMMENT_MARKERS: Final = ('"__typename": "Comment"', f'"{COUNT_KEY}"', f'"{CREATED_KEY}"')
+"""What a payload about comments holds: a comment, or a post's comment count or time."""
 
 
 class LeakError(ValueError):
@@ -214,14 +217,14 @@ def json_values(
 def page_payloads(
     html: str,
 ) -> list[Any]:
-    """Return the JSON a page holds in its script tags that mentions comments."""
+    """Return the JSON a page holds in its script tags that mentions comments or a post's time."""
 
     payloads = []
 
     for match in SCRIPT_JSON.finditer(html):
         source = match.group(1)
 
-        if "comment" not in source.lower():
+        if "comment" not in source.lower() and CREATED_KEY not in source:
             continue
 
         payloads.extend(json_values(source))
@@ -488,7 +491,7 @@ def about_comments(
 def prune(
     value: Any,
 ) -> Any:
-    """Return only what leads to a comment or a comment count, or none when nothing does.
+    """Return only what leads to a comment, or to a post's comment count or time, or none.
 
     A comment is kept whole. Above it, each object keeps its plain values and
     the members that lead to a comment or a count, and loses the rest: the
@@ -501,7 +504,7 @@ def prune(
             return value
 
         kept: dict[str, Any] = {}
-        leads = COUNT_KEY in value
+        leads = COUNT_KEY in value or (CREATED_KEY in value and "post_id" in value)
 
         for name, member in value.items():
             if isinstance(member, dict | list):

@@ -10,9 +10,9 @@ what it reads by what it is, wherever it sits:
   `comment_direct_parent`; its words are `body.text`, the people it mentions
   are `body.ranges`, as UTF-16 offsets into those words, and its GIFs,
   stickers and photos are its `attachments`;
-- a **comment count** is any object with a `post_id` and a
-  `feedback.total_comment_count`, as the reel's own page holds one. It counts
-  replies too.
+- a **post** is any object with a `post_id`: beside it, one object holds its
+  reel's `url` and its `feedback.total_comment_count`, which counts replies
+  too, and another its `creation_time`.
 
 A GIF from Giphy reaches the browser wrapped in Facebook's own CDN URL, the
 Giphy URL in its `url` parameter; the Giphy URL is unwrapped, so a GIF is the
@@ -24,7 +24,9 @@ here, and nothing else in Elder Sign does.
 
 import base64
 import binascii
+import re
 from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Final
 from urllib.parse import parse_qs, urlsplit
@@ -280,24 +282,69 @@ def post_id_of(
     return post_id if kind == "comment" and underscore and post_id.isdigit() else None
 
 
+@dataclass(frozen=True)
+class PostDetails:
+    """What Facebook says of one post: its reel, when it was published, how many comments it has."""
+
+    post_id: str
+    reel_id: str | None = None
+    created: datetime | None = None
+    comment_count: int | None = None
+
+
+REEL_PATH: Final = re.compile(r"/reel/(\d+)")
+"""A reel's ID in its URL: `https://www.facebook.com/reel/<id>/`."""
+
+
+def posts_in(
+    records: Iterable[dict[str, Any]],
+) -> dict[str, PostDetails]:
+    """Return what a capture says of each post, by its post ID.
+
+    Facebook says it piece by piece: one object holds a post's `post_id`, its
+    reel's `url` and its `feedback.total_comment_count`, another the same
+    `post_id` and its `creation_time`. They are put together here. Replies
+    are in the count.
+    """
+
+    found: dict[str, dict[str, Any]] = {}
+
+    for payload in payloads(records):
+        for value in objects(payload):
+            post_id = value.get("post_id")
+
+            if not isinstance(post_id, str):
+                continue
+
+            details = found.setdefault(post_id, {})
+            feedback = value.get("feedback")
+            count = feedback.get("total_comment_count") if isinstance(feedback, dict) else None
+            created = value.get("creation_time")
+            url = value.get("url")
+
+            if isinstance(count, int) and not isinstance(count, bool):
+                details["comment_count"] = count
+
+            if isinstance(created, int) and not isinstance(created, bool):
+                details["created"] = datetime.fromtimestamp(created, UTC)
+
+            if isinstance(url, str) and (reel := REEL_PATH.search(url)):
+                details["reel_id"] = reel.group(1)
+
+    return {
+        post_id: PostDetails(post_id=post_id, **details)
+        for post_id, details in found.items()
+        if details
+    }
+
+
 def comment_counts(
     records: Iterable[dict[str, Any]],
 ) -> dict[str, int]:
     """Return each post's comment count, replies included, by its post ID."""
 
-    counts: dict[str, int] = {}
-
-    for payload in payloads(records):
-        for value in objects(payload):
-            feedback = value.get("feedback")
-            post_id = value.get("post_id")
-
-            if not isinstance(post_id, str) or not isinstance(feedback, dict):
-                continue
-
-            count = feedback.get("total_comment_count")
-
-            if isinstance(count, int) and not isinstance(count, bool):
-                counts[post_id] = count
-
-    return counts
+    return {
+        post_id: details.comment_count
+        for post_id, details in posts_in(records).items()
+        if details.comment_count is not None
+    }

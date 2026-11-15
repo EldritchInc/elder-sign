@@ -7,6 +7,7 @@ every word masked and every ID replaced, every shape kept.
 
 import base64
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -14,12 +15,14 @@ import pytest
 
 from elder_sign.platforms import fingerprint_of, validate_scan
 from elder_sign.platforms.facebook.parse import (
+    PostDetails,
     comment_counts,
     comments_in,
     created_at,
     media_of,
     mentions_of,
     post_id_of,
+    posts_in,
     unwrapped,
 )
 from elder_sign.shared.keys import media_key
@@ -271,3 +274,31 @@ def test_counts_are_read_from_any_post_that_holds_one() -> None:
     }
 
     assert comment_counts(records(payload)) == {"1": 3, "2": 0}
+
+
+def test_a_posts_pieces_are_put_together_by_its_post_id() -> None:
+    payload = [
+        {
+            "post_id": "1",
+            "url": "https://www.facebook.com/reel/77/",
+            "feedback": {"total_comment_count": 4},
+        },
+        {"post_id": "1", "creation_time": 0},
+        {"post_id": "2", "url": "https://www.facebook.com/watch/9"},
+    ]
+
+    posts = posts_in(records(payload))
+
+    assert posts["1"] == PostDetails(
+        post_id="1", reel_id="77", created=datetime(1970, 1, 1, tzinfo=UTC), comment_count=4
+    )
+    assert "2" not in posts
+
+
+def test_the_canary_reels_post_is_known_by_its_reel() -> None:
+    reel = canary()[0]["url"].rstrip("/").rsplit("/", 1)[1]
+    (own,) = [details for details in posts_in(canary()).values() if details.reel_id == reel]
+
+    assert own.comment_count == 5
+    assert own.created == datetime(2026, 11, 15, 4, 26, 23, tzinfo=UTC)
+    assert {post_id_of(comment["id"]) for comment in comments_in(canary())} == {own.post_id}
