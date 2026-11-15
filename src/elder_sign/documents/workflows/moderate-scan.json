@@ -2,8 +2,8 @@
   "metadata": {
     "id": "e1de7516-0000-4000-8000-000000000400",
     "name": "moderate scan",
-    "description": "Judge every comment of one scan of a post under the transphobic-harassment policy: decide what trusted and blocked authors, blocked terms and remembered verdicts can, ask classify-comment about each distinct comment that is left, remember what it says, and give every comment its one verdict.",
-    "version": "1.2.0"
+    "description": "Judge every comment of one scan of a post under the transphobic-harassment policy: decide what trusted and blocked authors, blocked terms and remembered verdicts can, ask classify-comment about each distinct comment that is left, remember what it says, and give every comment its one verdict, settled by what each author has written before, and remember what each author wrote.",
+    "version": "1.3.0"
   },
   "steps": [
     {
@@ -47,7 +47,7 @@
       "specification": {
         "requirement": {
           "name": "lookup_verdicts",
-          "version": "1.2.0",
+          "version": "1.3.0",
           "runtime": "process"
         }
       },
@@ -227,7 +227,7 @@
       "specification": {
         "requirement": {
           "name": "combine_verdicts",
-          "version": "1.1.0",
+          "version": "1.2.0",
           "runtime": "process"
         }
       },
@@ -267,6 +267,50 @@
       "conditions": [],
       "retry_policy": {
         "max_attempts": 1,
+        "initial_delay_seconds": 0.0,
+        "backoff_multiplier": 1.0,
+        "maximum_delay_seconds": null
+      },
+      "failure_policy": "fail_workflow"
+    },
+    {
+      "id": "e1de7516-0000-4000-8000-000000000407",
+      "specification": {
+        "requirement": {
+          "name": "record_authors",
+          "version": "1.0.0",
+          "runtime": "process"
+        }
+      },
+      "depends_on": [
+        "e1de7516-0000-4000-8000-000000000401",
+        "e1de7516-0000-4000-8000-000000000406"
+      ],
+      "inputs": [
+        {
+          "name": "scan",
+          "source": {
+            "name": "keyed_scan"
+          }
+        },
+        {
+          "name": "outcome",
+          "source": {
+            "name": "outcome"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "learned",
+          "path": [
+            "learned"
+          ]
+        }
+      ],
+      "conditions": [],
+      "retry_policy": {
+        "max_attempts": 2,
         "initial_delay_seconds": 0.0,
         "backoff_multiplier": 1.0,
         "maximum_delay_seconds": null

@@ -30,13 +30,16 @@ from elder_sign.shared.store import (
     forget_model_verdicts,
     forget_standing,
     forget_term,
+    read_author_verdicts,
     read_description,
     read_fingerprint,
     read_flag,
+    read_reputation,
     read_standing,
     read_terms,
     read_verdict,
     transaction,
+    write_author_verdict,
     write_description,
     write_fingerprint,
     write_flag,
@@ -45,7 +48,7 @@ from elder_sign.shared.store import (
     write_verdict,
 )
 
-TABLES = {"actions", "authors", "flags", "media", "posts", "terms", "verdicts"}
+TABLES = {"actions", "author_verdicts", "authors", "flags", "media", "posts", "terms", "verdicts"}
 
 MODEL_HOSTILE = Verdict(verdict="hostile", source="model", model="m", reason="slur")
 
@@ -166,7 +169,7 @@ def test_a_file_at_an_older_schema_is_migrated_and_keeps_what_it_kept(
     try:
         (version,) = connection.execute("PRAGMA user_version").fetchone()
 
-        assert version == SCHEMA_VERSION == 3
+        assert version == SCHEMA_VERSION == 4
         assert tables(connection) == TABLES
         assert read_terms(connection, "transphobia") == ("slur",)
     finally:
@@ -346,6 +349,127 @@ def test_a_models_verdicts_are_forgotten_under_one_policy_only(
 
     assert forget_model_verdicts(state, "spam") == 1
     assert read_verdict(state, "transphobia", "content", "c:1") == MODEL_HOSTILE
+
+
+# What each author has been judged to write
+
+
+def judged(
+    state: sqlite3.Connection,
+    author: str,
+    *verdicts: tuple[str, bool, str],
+    post: str = "reel-1",
+) -> None:
+    """Record verdicts on an author's comments: verdict, whether it holds anywhere, source."""
+
+    for index, (verdict, anywhere, source) in enumerate(verdicts):
+        write_author_verdict(
+            state,
+            "transphobia",
+            "facebook",
+            author,
+            post,
+            f"{author}-{post}-{index}",
+            verdict,
+            anywhere=anywhere,
+            source=source,
+        )
+
+
+def test_an_authors_verdicts_are_kept_comment_by_comment(
+    state: sqlite3.Connection,
+) -> None:
+    judged(state, "kim", ("friendly", False, "model"), ("hostile", True, "model"))
+
+    assert read_author_verdicts(state, "transphobia", "facebook", "kim") == [
+        ("friendly", False, "model"),
+        ("hostile", True, "model"),
+    ]
+
+
+def test_a_humans_verdict_on_a_comment_is_never_replaced_by_a_models(
+    state: sqlite3.Connection,
+) -> None:
+    for verdict, source in (("friendly", "human"), ("hostile", "model")):
+        write_author_verdict(
+            state,
+            "transphobia",
+            "facebook",
+            "kim",
+            "p",
+            "c1",
+            verdict,
+            anywhere=True,
+            source=source,
+        )
+
+    assert read_author_verdicts(state, "transphobia", "facebook", "kim") == [
+        ("friendly", True, "human")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("verdicts", "reputation"),
+    [
+        ([("friendly", False, "model")] * 3, "ally"),
+        ([("friendly", False, "model")] * 2, None),
+        ([("friendly", False, "model")] * 3 + [("hostile", False, "model")], None),
+        ([("hostile", True, "model")] * 2, "troll"),
+        ([("hostile", True, "model"), ("hostile", False, "model")], None),
+        ([("hostile", True, "model")] * 2 + [("friendly", False, "model")], None),
+        ([("hostile", False, "model")] * 5, None),
+        ([("uncertain", False, "model")] * 5, None),
+        ([("friendly", False, "human")], "ally"),
+        ([("hostile", False, "human")], "troll"),
+        ([("friendly", False, "human"), ("hostile", True, "model")] * 2, "ally"),
+        ([("friendly", False, "human"), ("hostile", False, "human")], None),
+    ],
+    ids=[
+        "three friendly",
+        "two friendly",
+        "friendly once hostile",
+        "twice hostile anywhere",
+        "once anywhere once in context",
+        "hostile and friendly",
+        "hostile only in context",
+        "uncertain",
+        "you marked friendly",
+        "you marked hostile",
+        "yours outweighs a model's",
+        "you marked both",
+    ],
+)
+def test_a_reputation_is_learned_from_what_an_author_has_been_judged_to_write(
+    state: sqlite3.Connection,
+    verdicts: list[tuple[str, bool, str]],
+    reputation: str | None,
+) -> None:
+    judged(state, "kim", *verdicts)
+
+    assert read_reputation(state, "transphobia", "facebook", "kim") == reputation
+
+
+def test_a_reputation_follows_an_author_from_post_to_post_on_one_platform(
+    state: sqlite3.Connection,
+) -> None:
+    judged(state, "troll", ("hostile", True, "model"), post="reel-1")
+    judged(state, "troll", ("hostile", True, "model"), post="reel-2")
+
+    assert read_reputation(state, "transphobia", "facebook", "troll") == "troll"
+    assert read_reputation(state, "transphobia", "instagram", "troll") is None
+    assert read_reputation(state, "spam", "facebook", "troll") is None
+
+
+def test_forgetting_a_models_verdicts_forgets_what_it_taught_about_authors(
+    state: sqlite3.Connection,
+) -> None:
+    judged(state, "kim", ("hostile", True, "model"), ("friendly", False, "human"))
+
+    forget_model_verdicts(state)
+
+    assert read_author_verdicts(state, "transphobia", "facebook", "kim") == [
+        ("friendly", False, "human")
+    ]
 
 
 # Flags

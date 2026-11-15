@@ -53,9 +53,9 @@ def test_the_benchmark_is_canonical() -> None:
 
 
 def test_every_case_is_exact_on_one_verdict() -> None:
-    assert len(cases()) == 54
+    assert len(cases()) == 56
     assert {case["expected"]["comparison"] for case in cases()} == {"exact"}
-    assert expected() == {"hostile": 28, "friendly": 24, "uncertain": 2}
+    assert expected() == {"hostile": 28, "friendly": 26, "uncertain": 2}
 
 
 def test_the_policy_is_covered_area_by_area() -> None:
@@ -150,4 +150,4 @@ def test_a_judge_that_always_says_one_verdict_passes_only_those_cases(
 
     output = cli(capsys, "benchmark", "run", BENCHMARK_ID, "--workflow", JUDGE_COMMENT_ID)
 
-    assert passed(output) == (54, expected()[verdict])
+    assert passed(output) == (56, expected()[verdict])

@@ -17,6 +17,9 @@ The tables:
 - `actions`: every hide, delete and restriction, planned or done;
 - `media`: what each GIF or image shows, as a model described it once, so a
   comment's words are judged beside its media without looking at it again;
+- `author_verdicts`: the verdict on each comment an author wrote, and whether
+  it holds anywhere, so who is an ally and who is a troll is learned from
+  what they write, and follows them from post to post;
 - `flags`: what Elder Sign keeps of itself, by name: the canary each platform
   is checked against, and whether Elder Sign is frozen on a platform, acting
   on nothing there, because its canary stopped reading as it did.
@@ -34,7 +37,7 @@ from typing import Final
 DATABASE_ENVIRONMENT_VARIABLE: Final = "ELDER_SIGN_DB"
 """The variable naming the state file, granted to every tool that opens it."""
 
-SCHEMA_VERSION: Final = 3
+SCHEMA_VERSION: Final = 4
 """The schema version this Elder Sign writes, kept in SQLite's `user_version`."""
 
 BUSY_TIMEOUT_SECONDS: Final = 30.0
@@ -50,7 +53,13 @@ VERDICT_SOURCES: Final = ("model", "human")
 """Who decided: a human's verdict is never replaced by a model's."""
 
 STANDINGS: Final = ("trusted", "blocked")
-"""An author's standing."""
+"""An author's standing, as the person gave it."""
+
+ALLY_FRIENDLY_COMMENTS: Final = 3
+"""How many friendly comments, and no hostile one, make an author an ally."""
+
+TROLL_HOSTILE_COMMENTS: Final = 2
+"""How many comments hostile anywhere, and no friendly one, make an author a troll."""
 
 ACTIONS: Final = ("hide", "unhide", "delete", "restrict")
 """What Elder Sign can do to a comment or its author."""
@@ -128,6 +137,22 @@ MIGRATIONS: Final = (
         reason TEXT,
         recorded_at TEXT NOT NULL
     );
+    """,
+    """
+    CREATE TABLE author_verdicts (
+        policy TEXT NOT NULL,
+        platform TEXT NOT NULL,
+        author_id TEXT NOT NULL,
+        post_id TEXT NOT NULL,
+        comment_id TEXT NOT NULL,
+        verdict TEXT NOT NULL CHECK (verdict IN ('friendly', 'hostile', 'uncertain')),
+        anywhere INTEGER NOT NULL CHECK (anywhere IN (0, 1)),
+        source TEXT NOT NULL CHECK (source IN ('model', 'human')),
+        recorded_at TEXT NOT NULL,
+        PRIMARY KEY (policy, platform, comment_id)
+    );
+
+    CREATE INDEX author_verdicts_by_author ON author_verdicts (policy, platform, author_id);
     """,
 )
 """The script that brings the schema from each version to the next; version N runs script N - 1."""
@@ -587,5 +612,112 @@ def forget_model_verdicts(
         """,
         (policy, policy),
     )
+    connection.execute(
+        "DELETE FROM author_verdicts WHERE source = 'model' AND (? IS NULL OR policy = ?)",
+        (policy, policy),
+    )
 
     return int(cursor.rowcount)
+
+
+def write_author_verdict(
+    connection: sqlite3.Connection,
+    policy: str,
+    platform: str,
+    author_id: str,
+    post_id: str,
+    comment_id: str,
+    verdict: str,
+    *,
+    anywhere: bool,
+    source: str,
+) -> None:
+    """Keep the verdict on one comment an author wrote, unless a human's would be replaced."""
+
+    _require(verdict, VERDICTS, "Verdict")
+    _require(source, VERDICT_SOURCES, "Verdict source")
+
+    connection.execute(
+        """
+        INSERT INTO author_verdicts (
+            policy, platform, author_id, post_id, comment_id, verdict, anywhere, source,
+            recorded_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (policy, platform, comment_id) DO UPDATE SET
+            author_id = excluded.author_id,
+            post_id = excluded.post_id,
+            verdict = excluded.verdict,
+            anywhere = excluded.anywhere,
+            source = excluded.source,
+            recorded_at = excluded.recorded_at
+        WHERE author_verdicts.source = 'model' OR excluded.source = 'human'
+        """,
+        (
+            policy,
+            platform,
+            author_id,
+            post_id,
+            comment_id,
+            verdict,
+            int(anywhere),
+            source,
+            recorded_now(),
+        ),
+    )
+
+
+def read_author_verdicts(
+    connection: sqlite3.Connection,
+    policy: str,
+    platform: str,
+    author_id: str,
+) -> list[tuple[str, bool, str]]:
+    """Return the verdict on each comment an author wrote: verdict, whether anywhere, source."""
+
+    rows = connection.execute(
+        """
+        SELECT verdict, anywhere, source FROM author_verdicts
+        WHERE policy = ? AND platform = ? AND author_id = ?
+        ORDER BY recorded_at, comment_id
+        """,
+        (policy, platform, author_id),
+    ).fetchall()
+
+    return [(str(row[0]), bool(row[1]), str(row[2])) for row in rows]
+
+
+def read_reputation(
+    connection: sqlite3.Connection,
+    policy: str,
+    platform: str,
+    author_id: str,
+) -> str | None:
+    """Return whether an author is an `ally` or a `troll` by what they wrote, or none.
+
+    The person's own verdicts decide when they gave any, and only one way.
+    Otherwise an ally has written `ALLY_FRIENDLY_COMMENTS` friendly comments
+    and no hostile one, and a troll `TROLL_HOSTILE_COMMENTS` comments hostile
+    anywhere and no friendly one. Anyone else, and anyone the person judged
+    both ways, has no reputation.
+    """
+
+    verdicts = read_author_verdicts(connection, policy, platform, author_id)
+    human = {verdict for verdict, _, source in verdicts if source == "human"} - {"uncertain"}
+
+    if human:
+        (only,) = human if len(human) == 1 else (None,)
+
+        return {"friendly": "ally", "hostile": "troll"}.get(only or "")
+
+    friendly = sum(1 for verdict, _, _ in verdicts if verdict == "friendly")
+    hostile = sum(1 for verdict, _, _ in verdicts if verdict == "hostile")
+    anywhere = sum(1 for verdict, held, _ in verdicts if verdict == "hostile" and held)
+
+    if friendly >= ALLY_FRIENDLY_COMMENTS and hostile == 0:
+        return "ally"
+
+    if anywhere >= TROLL_HOSTILE_COMMENTS and friendly == 0:
+        return "troll"
+
+    return None

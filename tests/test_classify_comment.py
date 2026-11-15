@@ -134,6 +134,7 @@ def test_the_prompt_states_the_policy_and_shows_only_words() -> None:
         "explains or defends trans people's bodies or lives to someone attacking her",
         "tells someone else she is a woman because of her chromosomes or anatomy",
         "Comments she wrote herself are marked as hers",
+        "doubts or predictions about her relationship",
     ],
 )
 def test_the_policy_says_what_her_reel_taught_us(

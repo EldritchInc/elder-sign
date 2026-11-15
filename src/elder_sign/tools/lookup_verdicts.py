@@ -20,7 +20,11 @@ group carries one comment and its parent, as a model is shown them.
 A model is shown a comment's words and, for each GIF or image, its
 description from when `judge-media` looked at it, never the media itself. It
 is shown what the post says, its `caption`, and which comments the person
-wrote herself, marked `by_her`, so her answers to trolls read as hers. A
+wrote herself, marked `by_her`, so her answers to trolls read as hers, and
+the `standing` each other author has earned, `ally` or `troll`, from what
+they have been judged to write before. Every comment by an author with a
+standing is named in `reputations`, so the scan's verdicts can be settled
+by it once a model has spoken: see `combine_verdicts`. A
 group whose comment or parent has media no model has described yet names it
 in `undescribed_media`, with the URL to fetch it from, so the scan can have
 it judged before the words beside it are.
@@ -38,6 +42,7 @@ from elder_sign.shared.store import (
     DATABASE_ENVIRONMENT_VARIABLE,
     connect,
     read_description,
+    read_reputation,
     read_standing,
     read_terms,
     read_verdict,
@@ -45,11 +50,11 @@ from elder_sign.shared.store import (
 
 TOOL_ID: Final = "e1de7516-0000-4000-8000-000000000040"
 
-IMPLEMENTATION_ID: Final = "e1de7516-0000-4000-8000-000000000043"
+IMPLEMENTATION_ID: Final = "e1de7516-0000-4000-8000-000000000044"
 
 NAME: Final = "lookup_verdicts"
 
-VERSION: Final = "1.2.0"
+VERSION: Final = "1.3.0"
 
 DESCRIPTION: Final = (
     "Decide every comment of a keyed scan that trusted and blocked authors, blocked terms and "
@@ -150,6 +155,10 @@ OUTPUT_SCHEMA: Final[JsonObject] = {
                 "needs_inference": {"type": "array", "items": GROUP_SCHEMA},
                 "undescribed_media": {"type": "array", "items": UNDESCRIBED_SCHEMA},
                 "layers": {"type": "object", "additionalProperties": {"type": "integer"}},
+                "reputations": {
+                    "type": "object",
+                    "additionalProperties": {"enum": ["ally", "troll"]},
+                },
             },
             "required": [
                 "platform",
@@ -159,6 +168,7 @@ OUTPUT_SCHEMA: Final[JsonObject] = {
                 "needs_inference",
                 "undescribed_media",
                 "layers",
+                "reputations",
             ],
         }
     },
@@ -173,18 +183,23 @@ def _shown(
     comment: JsonObject,
     undescribed: dict[str, JsonObject],
     owner_id: str | None,
+    standings: dict[str, str | None],
 ) -> JsonObject:
     """Return the part of a comment a model is shown, noting media not yet described.
 
     Each GIF or image is shown as its kind and description; media no model
     has described is shown with no description, and noted in `undescribed`.
-    A comment the person wrote herself is marked `by_her`.
+    A comment the person wrote herself is marked `by_her`, and one by an
+    author with a standing is marked with it.
     """
 
     shown: JsonObject = {field: comment[field] for field in SHOWN_FIELDS if field in comment}
+    author_id = str(comment.get("author_id"))
 
-    if owner_id is not None and str(comment.get("author_id")) == owner_id:
+    if owner_id is not None and author_id == owner_id:
         shown["by_her"] = True
+    elif standings.get(author_id):
+        shown["standing"] = standings[author_id]
     media: list[JsonObject] = []
 
     for item in comment.get("media") or ():
@@ -267,11 +282,24 @@ def run(
     groups: dict[tuple[str, str], JsonObject] = {}
     undescribed: dict[str, JsonObject] = {}
     layers: dict[str, int] = {}
+    reputations: dict[str, str] = {}
 
     connection = connect()
 
     try:
         terms = read_terms(connection, policy)
+        standings: dict[str, str | None] = {
+            author_id: None
+            if author_id == owner_id
+            else read_reputation(connection, policy, platform, author_id)
+            for author_id in {str(comment["author_id"]) for comment in comments}
+        }
+
+        for comment in comments:
+            standing = standings.get(str(comment["author_id"]))
+
+            if standing:
+                reputations[str(comment["id"])] = standing
 
         for comment in comments:
             decided = _decide(connection, platform, policy, terms, comment)
@@ -308,10 +336,10 @@ def run(
                 "context_key": keys["context"],
                 "media_keys": list(keys["media"]),
                 "comment_ids": [str(comment["id"])],
-                "comment": _shown(connection, comment, undescribed, owner_id),
+                "comment": _shown(connection, comment, undescribed, owner_id, standings),
                 "parent": None
                 if parent is None or parent is comment
-                else _shown(connection, parent, undescribed, owner_id),
+                else _shown(connection, parent, undescribed, owner_id, standings),
                 "caption": str(caption) if caption else None,
             }
     finally:
@@ -326,5 +354,6 @@ def run(
             "needs_inference": list(groups.values()),
             "undescribed_media": list(undescribed.values()),
             "layers": layers,
+            "reputations": reputations,
         }
     }

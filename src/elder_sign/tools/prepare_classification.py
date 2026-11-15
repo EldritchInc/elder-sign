@@ -12,7 +12,8 @@ unchanged for `assemble_judgment`:
   so nothing in them can pass for the prompt's own words, then each GIF or
   image as its description: `"Kim" wrote: "lol exactly" [GIF: a clown]`.
   Replies often begin with the name of the person they answer, so naming
-  who wrote what shows an ally answering a troll for what it is;
+  who wrote what shows an ally answering a troll for what it is. An author
+  known from before is said to be: `"Kim" (has defended her before) wrote:`;
 - `thread`: what her post says, quoted, when it is known; then what the
   comment replies to: the post itself, another comment written the same
   way, saying so when she wrote it herself, or a comment that can no longer
@@ -29,11 +30,11 @@ from elder_sign.shared.protocol import JsonObject
 
 TOOL_ID: Final = "e1de7516-0000-4000-8000-000000000070"
 
-IMPLEMENTATION_ID: Final = "e1de7516-0000-4000-8000-000000000073"
+IMPLEMENTATION_ID: Final = "e1de7516-0000-4000-8000-000000000074"
 
 NAME: Final = "prepare_classification"
 
-VERSION: Final = "1.2.0"
+VERSION: Final = "1.3.0"
 
 DESCRIPTION: Final = (
     "Write one group of comments as a model is shown it: the comment's words, quoted, with "
@@ -42,6 +43,9 @@ DESCRIPTION: Final = (
 
 MAXIMUM_TEXT_LENGTH: Final = 1000
 """The most characters of a comment's words a model is shown."""
+
+STANDINGS: Final = {"ally": "has defended her before", "troll": "has attacked her before"}
+"""How an author's standing is said to a model."""
 
 KINDS: Final = {"gif": "GIF", "image": "image", "photo": "image", "sticker": "sticker"}
 """How each kind of media is named to a model."""
@@ -136,8 +140,11 @@ def written(
     author = str(comment.get("author_name") or "").strip()
     text = str(comment.get("text") or "").strip()
 
+    standing = STANDINGS.get(str(comment.get("standing") or ""))
+
     if author and not comment.get("by_her"):
-        parts.append(f"{quoted(author)} wrote:")
+        known = f" ({standing})" if standing else ""
+        parts.append(f"{quoted(author)}{known} wrote:")
 
     if text:
         parts.append(quoted(text))

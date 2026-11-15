@@ -169,6 +169,7 @@ def test_moderate_scan_maps_classify_comment_over_what_lookup_could_not_decide()
         "unwrap_results",
         "record_verdicts",
         "combine_verdicts",
+        "record_authors",
     ]
 
     lookup, mapped = workflow.steps[1], workflow.steps[2]
