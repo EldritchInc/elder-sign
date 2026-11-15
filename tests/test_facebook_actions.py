@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from elder_sign.browser import BrowserSettings, Pacer, open_browser
-from elder_sign.platforms.facebook.reader import ActionError, PlaywrightBrowser
+from elder_sign.platforms.facebook.reader import HIDDEN_INSTEAD, ActionError, PlaywrightBrowser
 
 pytestmark = [
     pytest.mark.browser,
@@ -52,6 +52,8 @@ def article(
 </div>"""
 
 
+ENCODED_109 = base64.b64encode(b"comment:900_109").decode().replace("=", "%3D")
+
 PAGE = f"""<html><body>
 {article("101", "the one", "/reel/1/?comment_id=101&__cft__=x")}
 {article("1012", "the one numbered like it", "/reel/1/?comment_id=1012")}
@@ -80,9 +82,34 @@ PAGE = f"""<html><body>
 <div role="button" class="unhide">Unhide</div>
 <div role="button" class="menu" aria-label="Edit or delete this">…</div>
 </div>
+<div role="article" id="c108" aria-label="Comment">
+<span class="text">tagging her</span> <a href="/reel/1/?comment_id=108">7h</a>
+<div role="button" class="tagmenu" aria-label="Delete, hide or report this">…</div>
+</div>
+<div role="article" id="c109" aria-label="Comment">This comment was hidden.
+<a href="/reel/1/?comment_id={ENCODED_109}">8h</a>
+<div role="button" class="unhide">Unhide</div></div>
 <div role="menu" id="menu" hidden>
 <div role="menuitem" id="delete">Delete</div>
 <div role="menuitem" id="hidecomment">Hide comment</div>
+<div role="menuitem">Report comment</div>
+</div>
+<div role="article" id="c110" aria-label="Comment">
+<span class="text">a real reel comment</span> <a href="/reel/1/?comment_id=110">9h</a>
+<div role="button" class="realmenu" aria-label="Delete, hide or report this">…</div>
+</div>
+<div class="prerendered">
+<div role="menuitem">Remove tag</div><div role="menuitem">Block Someone</div>
+</div>
+<div role="menu" id="realmenu" hidden>
+<div tabindex="0" id="realdelete">Delete</div>
+<div role="button" id="realhide">Hide comment</div>
+<div role="button">Report comment</div>
+</div>
+<div role="menu" id="tagmenu" hidden>
+<div role="menuitem">Remove tag</div>
+<div role="menuitem" id="taghide">Hide comment</div>
+<div role="menuitem">Block Someone You won't be able to see or contact each other.</div>
 <div role="menuitem">Report comment</div>
 </div>
 <div role="dialog" id="dialog" hidden>Delete Comment?
@@ -100,6 +127,20 @@ document.querySelectorAll('.unhide').forEach(button => button.onclick = event =>
   event.stopPropagation(); button.closest('[role=article]').dataset.hidden = '0'; }});
 document.addEventListener('keydown', event => {{
   if (event.key === 'Escape') menu.hidden = true; }});
+const realmenu = document.getElementById('realmenu');
+document.querySelectorAll('.realmenu').forEach(button => button.onclick = event => {{
+  event.stopPropagation(); target = button.closest('[role=article]'); realmenu.hidden = false; }});
+document.getElementById('realdelete').onclick = () => {{ realmenu.hidden = true;
+  dialog.hidden = false; }};
+document.addEventListener('keydown', event => {{
+  if (event.key === 'Escape') realmenu.hidden = true; }});
+const tagmenu = document.getElementById('tagmenu');
+document.querySelectorAll('.tagmenu').forEach(button => button.onclick = event => {{
+  event.stopPropagation(); target = button.closest('[role=article]'); tagmenu.hidden = false; }});
+document.getElementById('taghide').onclick = () => {{
+  target.dataset.hidden = '1'; tagmenu.hidden = true; }};
+document.addEventListener('keydown', event => {{
+  if (event.key === 'Escape') tagmenu.hidden = true; }});
 document.getElementById('hidecomment').onclick = () => {{
   target.dataset.hidden = '1'; menu.hidden = true; }};
 document.getElementById('delete').onclick = () => {{ menu.hidden = true; dialog.hidden = false; }};
@@ -172,6 +213,9 @@ def test_hiding_uses_the_button_under_that_comment_alone(
         "c106": "0",
         "c105": "0",
         "c107": "0",
+        "c108": "0",
+        "c109": "0",
+        "c110": "0",
         "c103": "1",
     }
 
@@ -219,7 +263,7 @@ def test_a_probe_reads_the_menu_and_clicks_nothing(
         menu_closed = page.evaluate("() => document.getElementById('menu').hidden")
 
     assert before == after
-    assert deleting == ("Delete", "Hide comment", "Report comment")
+    assert deleting == ("Delete [menuitem]", "Hide comment [menuitem]", "Report comment [menuitem]")
     assert hiding[0] == "[button] Hide"
     assert menu_closed is True
 
@@ -249,7 +293,7 @@ def test_a_comment_not_found_says_what_the_page_shows(
         browser.act(comment_id("999"), "unhide")
 
     assert "1 without a permalink" in str(raised.value)
-    assert "2 reading 'This comment was hidden'" in str(raised.value)
+    assert "3 reading 'This comment was hidden'" in str(raised.value)
     assert "linked as: comment_id=105+reply_comment_id=305" in str(raised.value)
 
 
@@ -262,3 +306,42 @@ def test_another_persons_comment_is_deleted_through_its_own_menu_name(
 
     assert menu == ("Delete", "Hide comment", "Report comment")
     assert "c106" not in after
+
+
+def test_where_facebook_offers_no_delete_the_comment_is_hidden_instead(
+    tmp_path: Path,
+) -> None:
+    with opened(tmp_path) as (browser, page):
+        probed = browser.act(comment_id("108"), "delete", probe=True)
+        unchanged = state(page)["c108"]
+        menu = browser.act(comment_id("108"), "delete")
+        after = state(page)
+
+    assert probed[-1] == HIDDEN_INSTEAD
+    assert "Remove tag [menuitem]" in probed
+    assert unchanged == "0"
+    assert menu[-1] == HIDDEN_INSTEAD
+    assert after["c108"] == "1"
+
+
+def test_a_hidden_comment_linked_by_its_whole_id_is_found(
+    tmp_path: Path,
+) -> None:
+    with opened(tmp_path) as (browser, page):
+        browser.act(comment_id("109"), "unhide")
+        after = state(page)
+
+    assert after["c109"] == "0"
+
+
+def test_the_menu_that_opened_is_read_and_not_stray_items_elsewhere_on_the_page(
+    tmp_path: Path,
+) -> None:
+    with opened(tmp_path) as (browser, page):
+        probed = browser.act(comment_id("110"), "delete", probe=True)
+        menu = browser.act(comment_id("110"), "delete")
+        after = state(page)
+
+    assert probed == ("Delete [clickable]", "Hide comment [button]", "Report comment [button]")
+    assert menu == ("Delete", "Hide comment", "Report comment")
+    assert "c110" not in after

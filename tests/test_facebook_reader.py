@@ -26,6 +26,7 @@ from elder_sign.platforms.facebook.parse import comments_in, objects, post_id_of
 from elder_sign.platforms.facebook.reader import (
     EXPANDERS,
     HIDDEN_BY_YOU,
+    HIDDEN_INSTEAD,
     OPEN_COMMENTS,
     REEL_URL,
     REELS_TAB,
@@ -387,6 +388,26 @@ def test_acting_shows_all_comments_then_the_hidden_and_reports_each_action() -> 
         ("h1", True),
     ]
     assert results[1].detail == "the comment is not on the page"
+
+
+def test_a_delete_facebook_did_not_offer_is_reported_as_the_hide_it_became() -> None:
+    reel = canary_reel()
+
+    class NoDelete(ReplayingBrowser):
+        def act(self, comment_id: str, action: str, *, probe: bool = False) -> tuple[str, ...]:
+            return ("Remove tag", "Hide comment", "Report comment", HIDDEN_INSTEAD)
+
+    browser = NoDelete({REEL_URL.format(reel_id=reel): canary()}, [])
+
+    (result,) = platform_on(browser).act(
+        Post("facebook", reel, REEL_URL.format(reel_id=reel)), [("c1", "delete")], set()
+    )
+
+    assert (result.action, result.ok, result.detail) == (
+        "hide",
+        True,
+        "Facebook offers no Delete here",
+    )
 
 
 def test_a_probe_is_passed_through_and_a_view_with_nothing_to_do_is_not_shown() -> None:

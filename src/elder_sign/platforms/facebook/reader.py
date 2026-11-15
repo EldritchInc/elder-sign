@@ -30,9 +30,12 @@ capture, so everything here but the clicking is proven without Facebook.
   `comment_id=<n>`, or `reply_comment_id=<n>` for a reply, never by its
   words. Hide and Unhide are buttons under the comment, beside Reply; a
   delete is chosen from its "…" menu and confirmed in Facebook's "Delete
-  Comment?" dialog. Where a button is missing, the menu is tried. Comments hidden now are
-  found where "Hidden by You" shows them. A probe opens each menu, reads it,
-  and closes it, clicking nothing.
+  Comment?" dialog. Where a button is missing, the menu is tried. Facebook
+  does not let her delete every comment on her reels; where its menu offers
+  no Delete, the comment is hidden instead, and the result says so. Comments
+  hidden now are found where "Hidden by You" shows them, where a permalink
+  may name a comment by its whole ID rather than its number. A probe opens
+  each menu, reads it, and closes it, clicking nothing.
 - **Notices** Facebook gives of comments it filtered out of view are those
   it gave while all comments were shown. The ones it gives with the reel's
   page, before all are chosen, and with "Hidden by You" describe views the
@@ -47,7 +50,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from elder_sign.browser import BrowserError, BrowserSettings, Pacer, open_browser
 from elder_sign.media import still_of
@@ -376,6 +379,13 @@ class FacebookPlatform:
                     results.append(ActionResult(comment_id, action, False, str(exc), exc.menu))
                     continue
 
+                if HIDDEN_INSTEAD in menu:
+                    instead = ActionResult(
+                        comment_id, "hide", True, "Facebook offers no Delete here", menu
+                    )
+                    results.append(instead)
+                    continue
+
                 results.append(ActionResult(comment_id, action, True, None, menu))
 
         return results
@@ -478,6 +488,15 @@ DIRECT: Final = {
     "unhide": re.compile(r"^Unhide$", re.IGNORECASE),
 }
 """The buttons under a comment, beside Reply, that hide and unhide it."""
+
+MENU_ITEM_SELECTOR: Final = (
+    "[role=menuitem], [role=menuitemradio], [role=option], [role=button], [role=link], "
+    "[tabindex='0'], [tabindex='-1']"
+)
+"""What counts as an item of a menu Facebook opens: anything in it that can be clicked."""
+
+HIDDEN_INSTEAD: Final = "(no Delete here: hidden instead)"
+"""What an action's menu says when Facebook offers no Delete, and the comment is hidden."""
 
 CONFIRM_DELETE: Final = re.compile(r"^Delete$", re.IGNORECASE)
 """The button that confirms a delete, when Facebook asks."""
@@ -743,24 +762,29 @@ class PlaywrightBrowser:
         self,
         comment_id: str,
     ) -> "Locator | None":
-        """Return a comment shown on the page, found by its own permalink, or none."""
+        """Return a comment shown on the page, found by its own permalink, or none.
+
+        A permalink names a comment by its number, or, where hidden comments are
+        shown, by its whole ID, as sent or URL-encoded.
+        """
 
         number = numeric_id_of(comment_id)
+        names = [name for name in (number, comment_id, quote(comment_id, safe="")) if name]
 
-        if number is None:
-            return None
+        for name in dict.fromkeys(names):
+            own = (
+                f"a[href*='reply_comment_id={name}&'], a[href$='reply_comment_id={name}']",
+                f"a[href*='comment_id={name}&']:not([href*='reply_comment_id']), "
+                f"a[href$='comment_id={name}']:not([href*='reply_comment_id'])",
+            )
 
-        own = (
-            f"a[href*='reply_comment_id={number}&'], a[href$='reply_comment_id={number}']",
-            f"a[href*='comment_id={number}&']:not([href*='reply_comment_id']), "
-            f"a[href$='comment_id={number}']:not([href*='reply_comment_id'])",
-        )
+            for selector in own:
+                found = self._page.locator("[role=article]").filter(
+                    has=self._page.locator(selector)
+                )
 
-        for selector in own:
-            found = self._page.locator("[role=article]").filter(has=self._page.locator(selector))
-
-            if found.count():
-                return found.last
+                if found.count():
+                    return found.last
 
         return None
 
@@ -798,7 +822,8 @@ class PlaywrightBrowser:
                 const linked = articles.filter(a => a.querySelector("a[href*='comment_id=']"));
                 const hidden = articles.filter(a => /This comment was hidden/i.test(a.innerText));
                 const numbers = hidden.map(a => [...a.querySelectorAll("a[href*='comment_id=']")]
-                    .map(link => (link.href.match(/(?:reply_)?comment_id=\\d+/g) || []).join("+"))
+                    .map(link => (link.href.match(/(?:reply_)?comment_id=[^&#]{1,12}/g) || [])
+                        .join("+"))
                     .join(" ")).filter(found => found).slice(0, 10);
                 return {shown: articles.length, unlinked: articles.length - linked.length,
                         hidden: hidden.length, numbers: numbers};
@@ -826,17 +851,42 @@ class PlaywrightBrowser:
 
         return None
 
-    def _menu_items(self) -> list[tuple[str, "Locator"]]:
-        """Return each visible item of the open menu, by name."""
+    def _menu_items(self) -> list[tuple[str, str, "Locator"]]:
+        """Return each item of the menu that just opened: its name, its role, and itself.
 
-        found = self._page.get_by_role("menuitem")
-        items = []
+        The menu is the last visible menu or dialog on the page: Facebook keeps
+        other menus' items in the page, and gives a menu's items whatever role
+        it likes, so every clickable thing in that one menu is an item.
+        """
 
-        for index in range(found.count()):
+        layers = self._page.locator("[role=menu], [role=dialog]")
+        layer = next(
+            (
+                layers.nth(index)
+                for index in reversed(range(layers.count()))
+                if layers.nth(index).is_visible()
+            ),
+            None,
+        )
+
+        if layer is None:
+            return []
+
+        found = layer.locator(MENU_ITEM_SELECTOR)
+        items: list[tuple[str, str, Locator]] = []
+        seen: set[str] = set()
+
+        for index in range(min(found.count(), 30)):
             item = found.nth(index)
 
-            if item.is_visible():
-                items.append((" ".join(item.inner_text().split()), item))
+            if not item.is_visible():
+                continue
+
+            name = " ".join(item.inner_text().split())
+
+            if name and name not in seen:
+                seen.add(name)
+                items.append((name, item.get_attribute("role") or "clickable", item))
 
         return items
 
@@ -894,12 +944,27 @@ class PlaywrightBrowser:
         button.click()
         self._pacer.pause(0.4)
         items = self._menu_items()
-        menu = tuple(name for name, _ in items)
+        menu = tuple(f"{name} [{role}]" if probe else name for name, role, _ in items)
 
         if shortcut is not None:
             menu = (f"[button] {' '.join(shortcut.inner_text().split())}", *menu)
         wanted = MENU_ITEMS.get(action)
-        item = next((found for name, found in items if wanted and wanted.match(name)), None)
+        item = next((found for name, _, found in items if wanted and wanted.match(name)), None)
+
+        if item is None and action == "delete":
+            instead = next(
+                (found for name, _, found in items if MENU_ITEMS["hide"].match(name)), None
+            )
+
+            if instead is not None:
+                if probe:
+                    self._page.keyboard.press("Escape")
+                else:
+                    instead.click()
+                    self._settle()
+                    self._pacer.pause(0.6)
+
+                return (*menu, HIDDEN_INSTEAD)
 
         if probe or item is None:
             self._page.keyboard.press("Escape")
