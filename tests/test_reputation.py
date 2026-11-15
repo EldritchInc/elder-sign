@@ -222,6 +222,7 @@ def test_every_verdict_not_decided_by_its_author_is_learned_against_them(
             {"comment_id": "c2", "verdict": "friendly", "layer": "content", "source": "human"},
             {"comment_id": "c3", "verdict": "friendly", "layer": "trusted_author"},
             {"comment_id": "c4", "verdict": "friendly", "layer": "known_ally"},
+            {"comment_id": "c1", "verdict": "friendly", "layer": "she_answered"},
         ],
     }
 

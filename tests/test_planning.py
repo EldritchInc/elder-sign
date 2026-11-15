@@ -137,6 +137,15 @@ def test_her_own_comments_and_trusted_authors_are_never_touched() -> None:
     assert result.left == ()
 
 
+def test_a_comment_she_answered_is_never_touched_and_unhidden_if_a_filter_hid_it() -> None:
+    result = planned(
+        [comment("c1"), comment("c2", hidden=True)],
+        [verdict("c1", "friendly", "she_answered"), verdict("c2", "friendly", "she_answered")],
+    )
+
+    assert actions(result) == [("c2", "unhide")]
+
+
 # Three minutes
 
 

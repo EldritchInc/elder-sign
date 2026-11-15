@@ -3,7 +3,7 @@
     "id": "e1de7516-0000-4000-8000-000000000100",
     "name": "resolve comments",
     "description": "Key every comment of one scan of a post, then decide every comment that trusted and blocked authors, blocked terms and remembered verdicts can decide, grouping the rest so each distinct comment in its context is asked about once. Uses no model.",
-    "version": "1.3.0"
+    "version": "1.4.0"
   },
   "steps": [
     {
@@ -47,7 +47,7 @@
       "specification": {
         "requirement": {
           "name": "lookup_verdicts",
-          "version": "1.3.0",
+          "version": "1.4.0",
           "runtime": "process"
         }
       },

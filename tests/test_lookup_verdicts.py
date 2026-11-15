@@ -209,6 +209,99 @@ def test_a_model_is_told_which_comments_she_wrote_herself(
     assert "by_her" not in piling_on["parent"]
 
 
+# What she chose to answer
+
+
+def test_a_comment_she_answered_is_friendly_without_a_model(
+    state: sqlite3.Connection,
+) -> None:
+    resolution = lookup(
+        comment("c1", "does she know you're trans?"),
+        comment("c2", "she does, and she's not my first", parent="c1", author="me"),
+        comment("c3", "lol exactly", parent="c1", author="troll-2"),
+        owner_id="me",
+    )
+
+    assert decided(resolution)["c1"] == ("friendly", "she_answered")
+    assert [group["comment_ids"] for group in resolution["needs_inference"]] == [["c2"], ["c3"]]
+
+
+def test_a_reply_she_answered_by_name_in_its_thread_is_friendly(
+    state: sqlite3.Connection,
+) -> None:
+    resolution = lookup(
+        comment("c1", "a top comment", author_name="Top", created_at="2026-11-15T01:00:00Z"),
+        comment(
+            "c2",
+            "is she trans?",
+            parent="c1",
+            author="trish",
+            author_name="Trish LeVeck",
+            created_at="2026-11-15T01:01:00Z",
+        ),
+        comment(
+            "c3",
+            "Trish LeVeck no, and neither were the others",
+            parent="c1",
+            author="me",
+            mentions=["Trish LeVeck"],
+            created_at="2026-11-15T01:02:00Z",
+        ),
+        comment(
+            "c4",
+            "is she though",
+            parent="c1",
+            author="trish",
+            author_name="Trish LeVeck",
+            created_at="2026-11-15T01:03:00Z",
+        ),
+        owner_id="me",
+    )
+
+    layers = {comment_id: layer for comment_id, (_, layer) in decided(resolution).items()}
+
+    assert layers.get("c2") == "she_answered"
+    assert "c4" not in layers
+    assert "c1" not in layers
+
+
+def test_naming_someone_answers_them_only_in_her_replys_own_thread(
+    state: sqlite3.Connection,
+) -> None:
+    resolution = lookup(
+        comment("c1", "one thread"),
+        comment("c2", "hi", parent="c1", author="kim", author_name="Kim"),
+        comment("c3", "another thread"),
+        comment("c4", "Kim thank you", parent="c3", author="me", mentions=["Kim"]),
+        owner_id="me",
+    )
+
+    assert decided(resolution).get("c2") is None
+    assert decided(resolution)["c3"] == ("friendly", "she_answered")
+
+
+def test_a_blocked_author_she_answered_stays_blocked(
+    state: sqlite3.Connection,
+) -> None:
+    write_standing(state, "facebook", "troll", "blocked")
+
+    resolution = lookup(
+        comment("c1", "whatever"),
+        comment("c2", "no", parent="c1", author="me"),
+        owner_id="me",
+    )
+
+    assert decided(resolution)["c1"] == ("hostile", "blocked_author")
+
+
+def test_without_knowing_her_account_nothing_is_answered(
+    state: sqlite3.Connection,
+) -> None:
+    resolution = lookup(comment("c1", "hi"), comment("c2", "hey", parent="c1", author="me"))
+
+    assert decided(resolution) == {}
+
+
 # Media, as a model is shown it
 
 

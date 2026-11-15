@@ -5,12 +5,17 @@ these layers in order, and the first that knows decides it:
 
 1. `trusted_author`: the author is trusted, so the comment is friendly;
 2. `blocked_author`: the author is blocked, so the comment is hostile;
-3. `nothing_to_judge`: the comment has neither words nor media it can be
+3. `she_answered`: the person answered it, so she found it friendly or
+   neutral. When her reply names someone, she answered that author's latest
+   comment in her reply's thread before it: a platform hangs every reply of a
+   thread from its top comment, and names whom a reply further down answers.
+   When it names no one found there, she answered her reply's parent;
+4. `nothing_to_judge`: the comment has neither words nor media it can be
    recognized by, so there is nothing to hold against it;
-4. `blocked_term`: its normalized text contains a blocked term;
-5. `media`: one of its GIFs or images was judged hostile on its own;
-6. `content`: its content was judged, in a way that holds in any thread;
-7. `context`: its content was judged in reply to this same parent content.
+5. `blocked_term`: its normalized text contains a blocked term;
+6. `media`: one of its GIFs or images was judged hostile on its own;
+7. `content`: its content was judged, in a way that holds in any thread;
+8. `context`: its content was judged in reply to this same parent content.
 
 What no layer decides needs a model. Those comments are grouped by their
 context, or by their content when their parent is unknown, so that a swarm's
@@ -50,11 +55,11 @@ from elder_sign.shared.store import (
 
 TOOL_ID: Final = "e1de7516-0000-4000-8000-000000000040"
 
-IMPLEMENTATION_ID: Final = "e1de7516-0000-4000-8000-000000000044"
+IMPLEMENTATION_ID: Final = "e1de7516-0000-4000-8000-000000000045"
 
 NAME: Final = "lookup_verdicts"
 
-VERSION: Final = "1.3.0"
+VERSION: Final = "1.4.0"
 
 DESCRIPTION: Final = (
     "Decide every comment of a keyed scan that trusted and blocked authors, blocked terms and "
@@ -65,6 +70,7 @@ DESCRIPTION: Final = (
 LAYERS: Final = (
     "trusted_author",
     "blocked_author",
+    "she_answered",
     "nothing_to_judge",
     "blocked_term",
     "media",
@@ -223,6 +229,7 @@ def _decide(
     policy: str,
     terms: tuple[str, ...],
     comment: JsonObject,
+    answered: set[str],
 ) -> tuple[str, str, str | None] | None:
     """Return the verdict, layer and source that decide a comment, or none when a model must."""
 
@@ -233,6 +240,9 @@ def _decide(
 
     if standing == "blocked":
         return "hostile", "blocked_author", None
+
+    if str(comment["id"]) in answered:
+        return "friendly", "she_answered", None
 
     keys: JsonObject = comment["keys"]
 
@@ -262,6 +272,70 @@ def _decide(
             return found.verdict, "context", found.source
 
     return None
+
+
+def _thread(
+    comment_id: str,
+    parents: dict[str, str | None],
+) -> str:
+    """Return the top-level comment a comment's thread hangs from."""
+
+    seen = {comment_id}
+    current = comment_id
+
+    while (parent := parents.get(current)) is not None and parent in parents and parent not in seen:
+        seen.add(parent)
+        current = parent
+
+    return current
+
+
+def answered_by_her(
+    comments: list[JsonObject],
+    owner_id: str | None,
+) -> set[str]:
+    """Return the comments the person answered: those her replies name, or else their parents."""
+
+    if owner_id is None:
+        return set()
+
+    parents = {
+        str(comment["id"]): None if comment.get("parent_id") is None else str(comment["parent_id"])
+        for comment in comments
+    }
+    answered: set[str] = set()
+
+    for reply in comments:
+        if str(reply.get("author_id")) != owner_id:
+            continue
+
+        reply_id = str(reply["id"])
+        parent = parents.get(reply_id)
+        names = {str(name).strip().casefold() for name in reply.get("mentions") or ()}
+        thread = _thread(reply_id, parents)
+        when = str(reply.get("created_at") or "")
+        latest: dict[str, tuple[str, str]] = {}
+
+        for other in comments:
+            other_id = str(other["id"])
+            name = str(other.get("author_name") or "").strip().casefold()
+            created = str(other.get("created_at") or "")
+
+            if (
+                name in names
+                and str(other.get("author_id")) != owner_id
+                and _thread(other_id, parents) == thread
+                and (not when or not created or created <= when)
+                and (name not in latest or created >= latest[name][0])
+            ):
+                latest[name] = (created, other_id)
+
+        if latest:
+            answered.update(other_id for _, other_id in latest.values())
+        elif parent is not None and parent in parents and parent != reply_id:
+            answered.add(parent)
+
+    return answered
 
 
 def run(
@@ -301,8 +375,10 @@ def run(
             if standing:
                 reputations[str(comment["id"])] = standing
 
+        answered = answered_by_her(comments, owner_id)
+
         for comment in comments:
-            decided = _decide(connection, platform, policy, terms, comment)
+            decided = _decide(connection, platform, policy, terms, comment, answered)
 
             if decided is not None:
                 verdict, layer, source = decided

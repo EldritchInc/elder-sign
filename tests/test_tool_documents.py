@@ -36,6 +36,7 @@ RELEASED: dict[str, str] = {
     "e1de7516-0000-4000-8000-000000000043": "lookup_verdicts@1.2.0",
     "e1de7516-0000-4000-8000-000000000073": "prepare_classification@1.2.0",
     "e1de7516-0000-4000-8000-0000000000a2": "combine_verdicts@1.1.0",
+    "e1de7516-0000-4000-8000-000000000044": "lookup_verdicts@1.3.0",
 }
 """Implementation IDs that earlier versions of a tool were released with.
 
