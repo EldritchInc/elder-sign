@@ -53,7 +53,12 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-elder_sign = ["py.typed", "documents/tools/*.json", "documents/workflows/*.json"]
+elder_sign = [
+    "py.typed",
+    "documents/benchmarks/*.json",
+    "documents/tools/*.json",
+    "documents/workflows/*.json",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
