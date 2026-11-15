@@ -12,6 +12,7 @@ from typing import Final
 
 from elder_sign import canary as canaries
 from elder_sign import judging, planning, scrub
+from elder_sign import review as reviewing
 from elder_sign.browser import BrowserError, BrowserSettings, profile_path
 from elder_sign.platforms import Post
 from elder_sign.platforms.facebook import capture as facebook_capture
@@ -315,6 +316,7 @@ def _judge(
     )
     planned = planning.plan(scan, judgment.outcome, now=datetime.now(UTC))
     report = {
+        "scan": scan,
         "outcome": judgment.outcome,
         "described": judgment.described,
         "undescribed_media": list(judgment.undescribed),
@@ -365,6 +367,52 @@ def _judge(
         f"{counted['deferred']} over this run's caps."
     )
     print(f"Kept in {output}, readable by you alone. Nothing on Facebook was changed.")
+
+    return 0
+
+
+def _review(
+    options: argparse.Namespace,
+    *,
+    ask: Callable[[str], str],
+) -> int:
+    """Show her what the last judge of a reel left open, and keep each call she makes."""
+
+    found = REEL_PATH.search(options.url)
+
+    if found is None:
+        print(f"{options.url} is not a link to a reel.", file=sys.stderr)
+        return 1
+
+    reel_id = found.group(1)
+    path = (
+        Path(options.report)
+        if options.report
+        else scans_path() / f"facebook-{reel_id}-verdicts.json"
+    )
+
+    if not path.exists():
+        print(
+            f"Reel {reel_id} has not been judged yet; run: elder-sign judge facebook {options.url}",
+            file=sys.stderr,
+        )
+        return 1
+
+    report = json.loads(path.read_text(encoding="utf-8"))
+    connection = store.connect()
+
+    try:
+        marked = reviewing.review(
+            report, connection, ask=ask, say=print, everything=bool(options.all)
+        )
+    finally:
+        connection.close()
+
+    print(
+        f"Marked {marked['friendly']} friendly and {marked['hostile']} hostile, "
+        f"skipped {marked['skipped']}. Your calls are kept for good; "
+        "the next judge applies them."
+    )
 
     return 0
 
@@ -608,6 +656,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--hidden", action="store_true", help="Keep the browser window hidden."
     )
 
+    reviewing_command = commands.add_parser(
+        "review",
+        help="Decide, one at a time, what the last judge of a reel left open; kept for good.",
+    )
+    reviewing_command.add_argument("platform", choices=PLATFORMS)
+    reviewing_command.add_argument("url", help="The reel's link.")
+    reviewing_command.add_argument(
+        "--all", action="store_true", help="Review what would be deleted too."
+    )
+    reviewing_command.add_argument("--report", help="The verdicts judge kept, if not the default.")
+
     verdicts = commands.add_parser(
         "verdicts",
         help="Manage the verdicts Elder Sign remembers.",
@@ -656,6 +715,7 @@ def main(
     arguments: Sequence[str] | None = None,
     *,
     wait: Callable[[], object] = input,
+    ask: Callable[[str], str] = input,
 ) -> int:
     """Run one `elder-sign` command, returning its exit status."""
 
@@ -681,6 +741,9 @@ def main(
 
     if options.command == "judge":
         return _judge(options)
+
+    if options.command == "review":
+        return _review(options, ask=ask)
 
     if options.command == "verdicts":
         return _forget_verdicts(options)
