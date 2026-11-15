@@ -14,7 +14,9 @@ The tables:
   reply to its parent, under one policy;
 - `authors`: the people who are trusted, and the people who are blocked;
 - `terms`: the terms that make a comment hostile under one policy;
-- `actions`: every hide, delete and restriction, planned or done.
+- `actions`: every hide, delete and restriction, planned or done;
+- `media`: what each GIF or image shows, as a model described it once, so a
+  comment's words are judged beside its media without looking at it again.
 """
 
 import os
@@ -29,7 +31,7 @@ from typing import Final
 DATABASE_ENVIRONMENT_VARIABLE: Final = "ELDER_SIGN_DB"
 """The variable naming the state file, granted to every tool that opens it."""
 
-SCHEMA_VERSION: Final = 1
+SCHEMA_VERSION: Final = 2
 """The schema version this Elder Sign writes, kept in SQLite's `user_version`."""
 
 BUSY_TIMEOUT_SECONDS: Final = 30.0
@@ -107,6 +109,14 @@ MIGRATIONS: Final = (
     );
 
     CREATE INDEX actions_by_comment ON actions (platform, comment_id);
+    """,
+    """
+    CREATE TABLE media (
+        media_key TEXT PRIMARY KEY,
+        description TEXT NOT NULL,
+        model TEXT,
+        recorded_at TEXT NOT NULL
+    );
     """,
 )
 """The script that brings the schema from each version to the next; version N runs script N - 1."""
@@ -451,4 +461,42 @@ def forget_term(
     connection.execute(
         "DELETE FROM terms WHERE policy = ? AND term = ?",
         (policy, term.strip()),
+    )
+
+
+def read_description(
+    connection: sqlite3.Connection,
+    media_key: str,
+) -> str | None:
+    """Return what one GIF or image shows, if it was ever described."""
+
+    row = connection.execute(
+        "SELECT description FROM media WHERE media_key = ?",
+        (media_key,),
+    ).fetchone()
+
+    return None if row is None else str(row[0])
+
+
+def write_description(
+    connection: sqlite3.Connection,
+    media_key: str,
+    description: str,
+    model: str | None = None,
+) -> None:
+    """Keep what one GIF or image shows, replacing what was kept before."""
+
+    if not description.strip():
+        raise StoreError("A media description cannot be blank.")
+
+    connection.execute(
+        """
+        INSERT INTO media (media_key, description, model, recorded_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT (media_key) DO UPDATE SET
+            description = excluded.description,
+            model = excluded.model,
+            recorded_at = excluded.recorded_at
+        """,
+        (media_key, description.strip(), model, recorded_now()),
     )
