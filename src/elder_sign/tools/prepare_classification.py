@@ -27,7 +27,7 @@ from elder_sign.shared.protocol import JsonObject
 
 TOOL_ID: Final = "e1de7516-0000-4000-8000-000000000070"
 
-IMPLEMENTATION_ID: Final = "e1de7516-0000-4000-8000-000000000071"
+IMPLEMENTATION_ID: Final = "e1de7516-0000-4000-8000-000000000072"
 
 NAME: Final = "prepare_classification"
 

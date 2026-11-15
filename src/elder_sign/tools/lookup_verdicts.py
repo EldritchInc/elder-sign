@@ -45,7 +45,7 @@ from elder_sign.shared.store import (
 
 TOOL_ID: Final = "e1de7516-0000-4000-8000-000000000040"
 
-IMPLEMENTATION_ID: Final = "e1de7516-0000-4000-8000-000000000042"
+IMPLEMENTATION_ID: Final = "e1de7516-0000-4000-8000-000000000043"
 
 NAME: Final = "lookup_verdicts"
 

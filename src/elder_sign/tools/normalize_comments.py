@@ -22,7 +22,7 @@ from elder_sign.shared.protocol import JsonObject
 
 TOOL_ID: Final = "e1de7516-0000-4000-8000-000000000010"
 
-IMPLEMENTATION_ID: Final = "e1de7516-0000-4000-8000-000000000011"
+IMPLEMENTATION_ID: Final = "e1de7516-0000-4000-8000-000000000012"
 
 NAME: Final = "normalize_comments"
 
