@@ -165,7 +165,10 @@ def holds_an_id(
     return key.lower() in ("id", "fbid") or key.endswith(("Id", "ID", "_id", "_fbid"))
 
 
-COMMENT_MARKERS: Final = ('"__typename": "Comment"', '"total_comment_count"')
+COUNT_KEY: Final = "total_comment_count"
+"""The key a post's comment count is kept under."""
+
+COMMENT_MARKERS: Final = ('"__typename": "Comment"', f'"{COUNT_KEY}"')
 """What a payload about comments holds: a comment, or a post's comment count."""
 
 
@@ -463,6 +466,44 @@ def about_comments(
     return any(marker in text for marker in COMMENT_MARKERS)
 
 
+def prune(
+    value: Any,
+) -> Any:
+    """Return only what leads to a comment or a comment count, or none when nothing does.
+
+    A comment is kept whole. Above it, each object keeps its plain values and
+    the members that lead to a comment or a count, and loses the rest: the
+    viewer's settings, the next reels' players, the people who reacted. A list
+    keeps the members that lead somewhere.
+    """
+
+    if isinstance(value, dict):
+        if value.get("__typename") == "Comment":
+            return value
+
+        kept: dict[str, Any] = {}
+        leads = COUNT_KEY in value
+
+        for name, member in value.items():
+            if isinstance(member, dict | list):
+                pruned = prune(member)
+
+                if pruned is not None:
+                    kept[name] = pruned
+                    leads = True
+            else:
+                kept[name] = member
+
+        return kept if leads else None
+
+    if isinstance(value, list):
+        members = [pruned for pruned in (prune(member) for member in value) if pruned is not None]
+
+        return members or None
+
+    return None
+
+
 def string_values(
     value: Any,
 ) -> Iterator[str]:
@@ -526,9 +567,9 @@ def scrub(
     """Return a capture's records scrubbed, as JSON Lines, refusing if anything leaked.
 
     Only what is about comments is kept: the payloads that hold a comment or a
-    post's comment count, and the responses they came in. A page Facebook loads
-    holds megabytes of everything else, as does a reel viewer's feed of other
-    people's reels. `everything` keeps it all.
+    post's comment count, pruned to what leads there, and the responses they
+    came in. A page Facebook loads holds megabytes of everything else, as does
+    a reel viewer's feed of other people's reels. `everything` keeps it all.
 
     Raises:
         LeakError: Something masked or replaced is still in the scrubbed capture.
@@ -541,7 +582,11 @@ def scrub(
         payloads = payloads_of(record)
 
         if not everything:
-            payloads = [payload for payload in payloads if about_comments(payload)]
+            payloads = [
+                pruned
+                for pruned in (prune(payload) for payload in payloads if about_comments(payload))
+                if pruned is not None
+            ]
 
             if not payloads:
                 continue

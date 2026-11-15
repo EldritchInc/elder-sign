@@ -15,6 +15,7 @@ from elder_sign.scrub import (
     leaks,
     mask,
     page_payloads,
+    prune,
     scrub,
 )
 
@@ -286,6 +287,38 @@ def test_a_posts_comment_count_is_about_comments() -> None:
     (line,) = scrub([record], Scrubber(KEY))
 
     assert json.loads(line)["payloads"] == [{"data": {"feedback": {"total_comment_count": 5}}}]
+
+
+def test_a_payload_is_pruned_to_what_leads_to_a_comment_or_a_count() -> None:
+    comment = {"__typename": "Comment", "id": "1", "feedback": {"reactors": [{"id": "2"}]}}
+    payload = {
+        "data": {
+            "viewer": {"settings": {"autoplay": True}},
+            "story": {
+                "id": "s",
+                "feedback": {"total_comment_count": 5, "reactors": {"edges": [{"id": "9"}]}},
+                "comments": {"total_count": 1, "edges": [{"cursor": "c", "node": comment}, {}]},
+            },
+            "next_reels": [{"id": "r", "player": {"src": "x"}}],
+        },
+        "extensions": {"is_final": True},
+    }
+
+    assert prune(payload) == {
+        "data": {
+            "story": {
+                "id": "s",
+                "feedback": {"total_comment_count": 5},
+                "comments": {"total_count": 1, "edges": [{"cursor": "c", "node": comment}]},
+            }
+        }
+    }
+
+
+def test_a_payload_leading_nowhere_is_pruned_away() -> None:
+    assert prune({"data": {"viewer": {"id": "1"}}}) is None
+    assert prune([{"a": 1}, []]) is None
+    assert prune("text") is None
 
 
 # Addresses and numbers
