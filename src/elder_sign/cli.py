@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Final
 
 from elder_sign import canary as canaries
-from elder_sign import scrub
+from elder_sign import judging, scrub
 from elder_sign.browser import BrowserError, BrowserSettings, profile_path
 from elder_sign.platforms import Post
 from elder_sign.platforms.facebook import capture as facebook_capture
@@ -273,6 +273,79 @@ def counted_line(
     )
 
 
+def _judge(
+    options: argparse.Namespace,
+    *,
+    runner: judging.Runner | None = None,
+) -> int:
+    """Judge every comment on one reel, describing its new media first, changing nothing there."""
+
+    found = REEL_PATH.search(options.url)
+
+    if found is None:
+        print(f"{options.url} is not a link to a reel.", file=sys.stderr)
+        return 1
+
+    reel_id = found.group(1)
+    post = Post(
+        platform="facebook", post_id=reel_id, url=facebook_reader.REEL_URL.format(reel_id=reel_id)
+    )
+    os.environ.setdefault(store.DATABASE_ENVIRONMENT_VARIABLE, str(store.database_path()))
+    connection = store.connect()
+
+    try:
+        canaries.ensure_unfrozen(connection, "facebook")
+    except canaries.FrozenError as exc:
+        print(exc, file=sys.stderr)
+        return FROZEN_EXIT
+    finally:
+        connection.close()
+
+    try:
+        with facebook_reader.facebook(_settings(options)) as platform:
+            scan = platform.scan(post)
+            judgment = judging.judge(scan, platform, runner or judging.AzathothRunner())
+    except (BrowserError, judging.WorkflowError) as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+    output = (
+        Path(options.out) if options.out else scans_path() / f"facebook-{reel_id}-verdicts.json"
+    )
+    report = {
+        "outcome": judgment.outcome,
+        "described": judgment.described,
+        "undescribed_media": list(judgment.undescribed),
+        "held": list(judgment.held),
+    }
+    write_private(output, json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+
+    counts = judgment.counts()
+    model = judgment.outcome.get("model", {})
+    layers = judgment.outcome.get("layers", {})
+    by_layer = ", ".join(f"{count} by {layer}" for layer, count in sorted(layers.items()))
+    print(
+        f"Judged {sum(counts.values())} comments on reel {reel_id}: {counts['hostile']} hostile, "
+        f"{counts['friendly']} friendly, {counts['uncertain']} uncertain."
+    )
+    print(f"Decided {by_layer or 'nothing'}.")
+    groups = _plural(int(model.get("groups", 0)), "group", "groups")
+    new_media = _plural(judgment.described, "new GIF, sticker or image", "new media")
+    print(
+        f"Asked a model about {groups} ({model.get('unreadable', 0)} unreadable); "
+        f"described {new_media}."
+    )
+
+    if judgment.held:
+        held = _plural(len(judgment.held), "comment", "comments")
+        missing = _plural(len(judgment.undescribed), "GIF, sticker or image", "pieces of media")
+        print(f"Held {held} for the next run: {missing} could not be fetched or described.")
+
+    print(f"Kept in {output}, readable by you alone. Nothing on Facebook was changed.")
+
+    return 0
+
+
 def _plural(
     count: int,
     one: str,
@@ -473,6 +546,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also fetch every GIF, sticker and image, as the stills a model would be shown.",
     )
 
+    judging_command = commands.add_parser(
+        "judge",
+        help="Judge every comment on one reel, describing new media first, changing nothing.",
+    )
+    judging_command.add_argument("platform", choices=PLATFORMS)
+    judging_command.add_argument("url", help="The reel's link.")
+    judging_command.add_argument("--out", help="Where to keep the verdicts.")
+    judging_command.add_argument(
+        "--hidden", action="store_true", help="Keep the browser window hidden."
+    )
+
     canary = commands.add_parser(
         "canary",
         help="Check Facebook against a reel of yours, to know when it changed under Elder Sign.",
@@ -529,6 +613,9 @@ def main(
 
     if options.command == "buttons":
         return _buttons(options)
+
+    if options.command == "judge":
+        return _judge(options)
 
     if options.command == "canary" and options.canary_command == "set":
         return _set_canary(options)
