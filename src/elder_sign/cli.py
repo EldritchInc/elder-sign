@@ -10,8 +10,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
+from elder_sign import audit, judging, planning, scrub
 from elder_sign import canary as canaries
-from elder_sign import judging, planning, scrub
 from elder_sign import review as reviewing
 from elder_sign.browser import BrowserError, BrowserSettings, profile_path
 from elder_sign.platforms import Post
@@ -391,14 +391,16 @@ def _review(
         else scans_path() / f"facebook-{reel_id}-verdicts.json"
     )
 
-    if not path.exists():
+    report = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+    if "scan" not in report:
         print(
-            f"Reel {reel_id} has not been judged yet; run: elder-sign judge facebook {options.url}",
+            f"Reel {reel_id} has not been judged since review came; "
+            f"run: elder-sign judge facebook {options.url}",
             file=sys.stderr,
         )
         return 1
 
-    report = json.loads(path.read_text(encoding="utf-8"))
     connection = store.connect()
 
     try:
@@ -413,6 +415,46 @@ def _review(
         f"skipped {marked['skipped']}. Your calls are kept for good; "
         "the next judge applies them."
     )
+
+    return 0
+
+
+def _log(
+    options: argparse.Namespace,
+) -> int:
+    """Print what Elder Sign planned and did, newest first, without a word of any comment."""
+
+    post_id = None
+
+    if options.reel:
+        found = REEL_PATH.search(options.reel)
+
+        if found is None:
+            print(f"{options.reel} is not a link to a reel.", file=sys.stderr)
+            return 1
+
+        post_id = found.group(1)
+
+    since = datetime.fromisoformat(options.since).replace(tzinfo=UTC) if options.since else None
+    connection = store.connect()
+
+    try:
+        logged = audit.entries(
+            connection, options.platform, post_id=post_id, since=since, limit=options.limit
+        )
+    finally:
+        connection.close()
+
+    for entry in logged:
+        dry = "dry run" if entry.dry_run else ""
+        print(
+            f"{entry.recorded_at}  {entry.status:<7} {entry.action:<7} {dry:<8}"
+            f"reel {entry.post_id}  comment …{entry.comment_id[-10:]}  "
+            f"{entry.verdict or ''} by {entry.layer or '?'}"
+            + (f"  ({entry.detail})" if entry.detail else "")
+        )
+
+    print(_plural(len(logged), "action", "actions") + ".")
 
     return 0
 
@@ -667,6 +709,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     reviewing_command.add_argument("--report", help="The verdicts judge kept, if not the default.")
 
+    logging = commands.add_parser(
+        "log",
+        help="Show what Elder Sign planned and did in your name, newest first.",
+    )
+    logging.add_argument("platform", choices=PLATFORMS)
+    logging.add_argument("--reel", help="Only this reel, by its link.")
+    logging.add_argument("--since", help="Only since this date or time, in UTC: 2026-11-15.")
+    logging.add_argument("--limit", type=int, default=200, help="At most this many.")
+
     verdicts = commands.add_parser(
         "verdicts",
         help="Manage the verdicts Elder Sign remembers.",
@@ -741,6 +792,9 @@ def main(
 
     if options.command == "judge":
         return _judge(options)
+
+    if options.command == "log":
+        return _log(options)
 
     if options.command == "review":
         return _review(options, ask=ask)
