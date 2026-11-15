@@ -16,7 +16,10 @@ The tables:
 - `terms`: the terms that make a comment hostile under one policy;
 - `actions`: every hide, delete and restriction, planned or done;
 - `media`: what each GIF or image shows, as a model described it once, so a
-  comment's words are judged beside its media without looking at it again.
+  comment's words are judged beside its media without looking at it again;
+- `flags`: what Elder Sign keeps of itself, by name: the canary each platform
+  is checked against, and whether Elder Sign is frozen on a platform, acting
+  on nothing there, because its canary stopped reading as it did.
 """
 
 import os
@@ -31,7 +34,7 @@ from typing import Final
 DATABASE_ENVIRONMENT_VARIABLE: Final = "ELDER_SIGN_DB"
 """The variable naming the state file, granted to every tool that opens it."""
 
-SCHEMA_VERSION: Final = 2
+SCHEMA_VERSION: Final = 3
 """The schema version this Elder Sign writes, kept in SQLite's `user_version`."""
 
 BUSY_TIMEOUT_SECONDS: Final = 30.0
@@ -118,6 +121,14 @@ MIGRATIONS: Final = (
         recorded_at TEXT NOT NULL
     );
     """,
+    """
+    CREATE TABLE flags (
+        name TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        reason TEXT,
+        recorded_at TEXT NOT NULL
+    );
+    """,
 )
 """The script that brings the schema from each version to the next; version N runs script N - 1."""
 
@@ -132,6 +143,15 @@ class Fingerprint:
 
     comment_count: int
     newest_comment_id: str | None
+
+
+@dataclass(frozen=True)
+class Flag:
+    """Something Elder Sign keeps of itself, by name, and why."""
+
+    value: str
+    reason: str | None
+    recorded_at: str
 
 
 @dataclass(frozen=True)
@@ -500,3 +520,50 @@ def write_description(
         """,
         (media_key, description.strip(), model, recorded_now()),
     )
+
+
+def read_flag(
+    connection: sqlite3.Connection,
+    name: str,
+) -> Flag | None:
+    """Return a flag, if it is set."""
+
+    row = connection.execute(
+        "SELECT value, reason, recorded_at FROM flags WHERE name = ?",
+        (name,),
+    ).fetchone()
+
+    return None if row is None else Flag(value=row[0], reason=row[1], recorded_at=row[2])
+
+
+def write_flag(
+    connection: sqlite3.Connection,
+    name: str,
+    value: str,
+    reason: str | None = None,
+) -> None:
+    """Set a flag, replacing it if it was set."""
+
+    if not name.strip() or not value:
+        raise StoreError("A flag needs a name and a value.")
+
+    connection.execute(
+        """
+        INSERT INTO flags (name, value, reason, recorded_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT (name) DO UPDATE SET
+            value = excluded.value,
+            reason = excluded.reason,
+            recorded_at = excluded.recorded_at
+        """,
+        (name.strip(), value, reason, recorded_now()),
+    )
+
+
+def forget_flag(
+    connection: sqlite3.Connection,
+    name: str,
+) -> None:
+    """Clear a flag; clearing one never set changes nothing."""
+
+    connection.execute("DELETE FROM flags WHERE name = ?", (name,))

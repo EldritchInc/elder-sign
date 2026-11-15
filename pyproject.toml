@@ -39,9 +39,18 @@ Repository = "https://github.com/EldritchInc/elder-sign"
 Issues = "https://github.com/EldritchInc/elder-sign/issues"
 Azathoth = "https://github.com/EldritchInc/azathoth"
 
+[project.scripts]
+elder-sign = "elder_sign.cli:main"
+
 [project.optional-dependencies]
+facebook = [
+    "playwright>=1.45",
+    "pillow>=10",
+]
 dev = [
     "mypy",
+    "pillow>=10",
+    "playwright>=1.45",
     "pytest",
     "ruff",
 ]
@@ -66,6 +75,9 @@ addopts = [
     "--strict-markers",
     "--strict-config",
     "-ra",
+]
+markers = [
+    "browser: opens a real browser; runs only when ELDER_SIGN_BROWSER_TESTS=1",
 ]
 
 [tool.ruff]
