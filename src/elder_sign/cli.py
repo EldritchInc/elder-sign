@@ -178,7 +178,7 @@ def _scan(
     )
     print(
         f"{len(comments) - hidden} visible + {hidden} hidden = {len(comments)}; "
-        f"Facebook counts {counted if counted is not None else 'none'}."
+        f"{counted_line(counted, len(comments))}"
     )
 
     for notice in notices:
@@ -223,6 +223,24 @@ def _buttons(
             print(f"{count:>3}  {name}")
 
     return 0
+
+
+def counted_line(
+    counted: int | None,
+    read: int,
+) -> str:
+    """Return what Facebook counts on a reel, and how many of those it never served."""
+
+    if counted is None:
+        return "Facebook counts none."
+
+    if counted <= read:
+        return f"Facebook counts {counted}."
+
+    return (
+        f"Facebook counts {counted}: {counted - read} counted but not served "
+        "(deleted, orphaned or from blocked accounts)."
+    )
 
 
 def scans_path() -> Path:

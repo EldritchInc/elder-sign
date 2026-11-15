@@ -20,13 +20,19 @@ capture, so everything here but the clicking is proven without Facebook.
   filter, and opens those. Facebook plays other people's reels beside the
   person's, so only the comments on the reel's own post are kept. The scan
   says how many comments Facebook counts, so what was read can be checked
-  against it.
+  against it: Facebook counts comments it never serves, such as replies
+  orphaned by a deleted comment and comments of blocked accounts.
+- **Notices** Facebook gives of comments it filtered out of view are those
+  it gave while all comments were shown. The ones it gives with the reel's
+  page, before all are chosen, and with "Hidden by You" describe views the
+  scan left or chose, not what it read.
 """
 
 import re
 from collections import Counter
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager, suppress
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
@@ -53,7 +59,7 @@ from elder_sign.platforms.facebook.session import signed_in_account
 from elder_sign.shared.store import Fingerprint
 
 if TYPE_CHECKING:
-    from playwright.sync_api import BrowserContext, Locator, Page
+    from playwright.sync_api import BrowserContext, Locator, Page, Request, Response
 
 PLATFORM: Final = "facebook"
 
@@ -66,6 +72,29 @@ OLDER_TOLERANCE: Final = 3
 """How many reels older than the window are read before the listing stops."""
 
 Records = list[dict[str, Any]]
+
+Stage = Literal["visit", "opening", "shown", "hidden"]
+"""What a page was showing when the browser asked Facebook for something."""
+
+
+@dataclass(frozen=True)
+class Expansion:
+    """What Facebook sent while a reel's comments were opened, by what they showed."""
+
+    opening: Records = field(default_factory=list)
+    """Sent as the comments opened, before all of them were chosen: Facebook's own ranking."""
+
+    shown: Records = field(default_factory=list)
+    """Sent while all comments were shown and opened, or by default when there is no choice."""
+
+    hidden: Records = field(default_factory=list)
+    """Sent while the comments hidden by the person, or by their keyword filter, were shown."""
+
+    @property
+    def records(self) -> Records:
+        """Everything sent, in the order it was."""
+
+        return [*self.opening, *self.shown, *self.hidden]
 
 
 class Browser(Protocol):
@@ -80,7 +109,7 @@ class Browser(Protocol):
     def expand(
         self,
         comment_count: int | None = None,
-    ) -> Records:
+    ) -> Expansion:
         """Open every folded comment and reply on the open page, and return what was sent.
 
         `comment_count` is how many comments the reel has, when it is known, so
@@ -224,9 +253,9 @@ class FacebookPlatform:
         visited = self._browser.visit(post.url)
         details = self.details_of(post.post_id, visited)
         count = details.comment_count if details else None
-        records = visited + self._browser.expand(count)
-        self.notices = filtering_notices(records)
-        scan = self._own_comments(post.post_id, records)
+        expansion = self._browser.expand(count)
+        self.notices = filtering_notices(expansion.shown)
+        scan = self._own_comments(post.post_id, visited + expansion.records)
         scan["comment_count"] = count
 
         return scan
@@ -299,6 +328,9 @@ class PlaywrightBrowser:
 
     Buttons are found by their accessible names, as a screen reader finds
     them, not by Facebook's markup, which changes from week to week.
+
+    Each response is known by the stage its request was sent in, not the one
+    it arrived in: Facebook answers a click after the click has returned.
     """
 
     @property
@@ -321,8 +353,35 @@ class PlaywrightBrowser:
         self._max_expansions = max_expansions
         self._max_scrolls = max_scrolls
         self._settle_milliseconds = settle_milliseconds
-        context.on("response", self._recorder.observe_response)
+        self._stage: Stage = "visit"
+        self._asked: dict[Request, Stage] = {}
+        self._stages: list[Stage] = []
+        context.on("request", self._observe_request)
+        context.on("response", self._observe_response)
         self._page: Page = context.pages[0] if context.pages else context.new_page()
+
+    def _observe_request(
+        self,
+        request: "Request",
+    ) -> None:
+        """Note the stage a request is sent in."""
+
+        self._asked[request] = self._stage
+
+    def _observe_response(
+        self,
+        response: "Response",
+    ) -> None:
+        """Record a response, if it is kept, as of the stage its request was sent in.
+
+        A response's body is read as it is recorded, and other responses can
+        arrive meanwhile, so each is staged as it is recorded, in that order.
+        """
+
+        stage = self._asked.pop(response.request, self._stage)
+
+        if self._recorder.keep_response(response):
+            self._stages.append(stage)
 
     def _since(
         self,
@@ -347,6 +406,7 @@ class PlaywrightBrowser:
         """Open a page, wait a human while, and return what Facebook sent for it."""
 
         start = len(self._recorder.records)
+        self._stage = "visit"
         self._page.goto(url, wait_until="domcontentloaded")
         self._settle()
         self._pacer.pause()
@@ -415,8 +475,9 @@ class PlaywrightBrowser:
     def _choose(
         self,
         choice: re.Pattern[str],
+        stage: Stage,
     ) -> bool:
-        """Choose which comments the reel shows, and return whether the choice was there."""
+        """Choose which comments the reel shows, as `stage`, and say whether that was offered."""
 
         sorting = self._visible("button", SORTING)
 
@@ -431,6 +492,7 @@ class PlaywrightBrowser:
             self._page.keyboard.press("Escape")
             return False
 
+        self._stage = stage
         option.click()
         self._settle()
         self._pacer.pause(0.5)
@@ -467,22 +529,41 @@ class PlaywrightBrowser:
     def expand(
         self,
         comment_count: int | None = None,
-    ) -> Records:
+    ) -> Expansion:
         """Open every comment, then every hidden one, paced, and return what was sent meanwhile.
 
         All comments are shown and every fold opened; then the comments hidden
         by the person, or by their keyword filter, are shown and opened too.
+        When Facebook offers no choice of all comments, what it shows once the
+        comments are open is what was shown.
         """
 
         start = len(self._recorder.records)
+        self._stage = "opening"
         self.open_comments(comment_count)
-        self._choose(ALL_COMMENTS)
+        chosen = self._choose(ALL_COMMENTS, "shown")
+
+        if not chosen:
+            self._stage = "shown"
+
         self._open_folds()
 
-        if self._choose(HIDDEN_BY_YOU):
+        if self._choose(HIDDEN_BY_YOU, "hidden"):
             self._open_folds()
 
-        return self._since(start)
+        staged = list(zip(self._stages[start:], self._recorder.records[start:], strict=True))
+
+        def sent_in(*stages: Stage) -> Records:
+            return [record for stage, record in staged if stage in stages]
+
+        if not chosen:
+            return Expansion(shown=sent_in("visit", "opening", "shown"), hidden=sent_in("hidden"))
+
+        return Expansion(
+            opening=sent_in("visit", "opening"),
+            shown=sent_in("shown"),
+            hidden=sent_in("hidden"),
+        )
 
     def button_names(self) -> list[str]:
         """Return the name of every visible button on the open page, as a screen reader hears it.

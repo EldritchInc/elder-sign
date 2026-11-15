@@ -125,7 +125,15 @@ class Recorder:
         self,
         response: "Response",
     ) -> None:
-        """Keep one browser response if a capture keeps its kind."""
+        """Keep one browser response if a capture keeps its kind, as the browser's listener."""
+
+        self.keep_response(response)
+
+    def keep_response(
+        self,
+        response: "Response",
+    ) -> bool:
+        """Keep one browser response if a capture keeps its kind, and return whether it did."""
 
         request = response.request
 
@@ -135,7 +143,7 @@ class Recorder:
             except Exception as exc:  # a body the browser lost is noted, never fatal
                 return f"<body unavailable: {exc}>"
 
-        self.observe(
+        return self.observe(
             url=response.url,
             method=request.method,
             resource_type=request.resource_type,

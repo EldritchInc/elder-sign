@@ -5,6 +5,7 @@ decision it makes is proven without Facebook. A real browser is then run on
 a page made to behave as Facebook's does, to prove it opens what is folded.
 """
 
+import copy
 import json
 import os
 import threading
@@ -19,7 +20,7 @@ import pytest
 
 from elder_sign.browser import BrowserSettings, Pacer, open_browser
 from elder_sign.platforms import Platform, Post
-from elder_sign.platforms.facebook.parse import comments_in, post_id_of, posts_in
+from elder_sign.platforms.facebook.parse import comments_in, objects, post_id_of, posts_in
 from elder_sign.platforms.facebook.reader import (
     EXPANDERS,
     HIDDEN_BY_YOU,
@@ -27,6 +28,7 @@ from elder_sign.platforms.facebook.reader import (
     REEL_URL,
     REELS_TAB,
     SORTING,
+    Expansion,
     FacebookPlatform,
     PlaywrightBrowser,
     opens_comments,
@@ -52,11 +54,11 @@ class ReplayingBrowser:
         self,
         pages: dict[str, list[dict[str, Any]]],
         links: list[str],
-        expanded: list[dict[str, Any]] | None = None,
+        expanded: Expansion | None = None,
     ) -> None:
         self._pages = pages
         self._links = links
-        self._expanded = expanded or []
+        self._expanded = expanded or Expansion()
         self.visited: list[str] = []
         self.expansions = 0
         self.counts: list[int | None] = []
@@ -66,10 +68,10 @@ class ReplayingBrowser:
         self.visited.append(url)
         return list(self._pages.get(url, []))
 
-    def expand(self, comment_count: int | None = None) -> list[dict[str, Any]]:
+    def expand(self, comment_count: int | None = None) -> Expansion:
         self.expansions += 1
         self.counts.append(comment_count)
-        return list(self._expanded)
+        return self._expanded
 
     def reel_links(self, url: str) -> list[str]:
         self.listed.append(url)
@@ -86,6 +88,30 @@ def old_reel_page(
     timed = {"post_id": f"post-{reel_id}", "creation_time": int(created.timestamp())}
 
     return [{"kind": "document", "payloads": [{"data": post}, {"data": timed}]}]
+
+
+def recounted(
+    records: list[dict[str, Any]],
+    comment_count: int,
+) -> list[dict[str, Any]]:
+    """Return a page whose reel Facebook counts this many comments on, serving the same ones."""
+
+    page = copy.deepcopy(records)
+
+    for record in page:
+        for value in objects(record.get("payloads", [])):
+            if "total_comment_count" in value:
+                value["total_comment_count"] = comment_count
+
+    return page
+
+
+def notice(
+    text: str,
+) -> dict[str, Any]:
+    """Return a response that holds one notice Facebook gives of comments it filtered out."""
+
+    return {"kind": "graphql", "payloads": [{"data": {"filtering_footer_string": text}}]}
 
 
 def platform_on(
@@ -190,6 +216,21 @@ def test_a_reel_whose_page_holds_no_count_counts_the_comments_it_loads() -> None
     assert fingerprint.comment_count == 5
 
 
+def test_comments_facebook_counts_but_never_serves_leave_the_fingerprint_steady() -> None:
+    reel = canary_reel()
+    page = recounted(canary(), 12)
+    browser = ReplayingBrowser({REEL_URL.format(reel_id=reel): page}, [])
+    platform = platform_on(browser)
+    post = Post("facebook", reel, REEL_URL.format(reel_id=reel))
+
+    first = platform.fingerprint(post)
+    second = platform.fingerprint(post)
+
+    assert len(comments_in(page)) == 5
+    assert first.comment_count == 12
+    assert first == second
+
+
 # Scans
 
 
@@ -215,7 +256,7 @@ def test_a_scan_opens_the_reel_expands_it_and_keeps_only_its_own_comments() -> N
         ],
     }
     browser = ReplayingBrowser(
-        {REEL_URL.format(reel_id=reel): canary()}, [], expanded=[someone_elses]
+        {REEL_URL.format(reel_id=reel): canary()}, [], expanded=Expansion(shown=[someone_elses])
     )
     platform = platform_on(browser)
 
@@ -229,6 +270,37 @@ def test_a_scan_opens_the_reel_expands_it_and_keeps_only_its_own_comments() -> N
     assert scan["post_id"] == reel
     assert len(scan["comments"]) == 5
     assert {post_id_of(comment["id"]) for comment in scan["comments"]} == {own_post}
+
+
+def test_only_notices_given_while_all_comments_are_shown_are_reported() -> None:
+    reel = canary_reel()
+    preloaded = notice("Most relevant is selected, so some comments may have been filtered out.")
+    page = [*canary(), preloaded]
+    expansion = Expansion(
+        opening=[notice("Most Relevant is selected, so some replies may have been filtered out.")],
+        shown=[notice("Some comments were filtered as spam.")],
+        hidden=[notice("Hidden by you is selected, so other comments have been filtered out.")],
+    )
+    browser = ReplayingBrowser({REEL_URL.format(reel_id=reel): page}, [], expanded=expansion)
+    platform = platform_on(browser)
+
+    platform.scan(Post("facebook", reel, REEL_URL.format(reel_id=reel)))
+
+    assert platform.notices == ["Some comments were filtered as spam."]
+
+
+def test_a_scan_reads_comments_from_every_part_of_its_expansion() -> None:
+    reel = canary_reel()
+    (first, *rest) = canary()
+    browser = ReplayingBrowser(
+        {REEL_URL.format(reel_id=reel): [first]},
+        [],
+        expanded=Expansion(opening=rest[:3], shown=rest[3:6], hidden=rest[6:]),
+    )
+
+    scan = platform_on(browser).scan(Post("facebook", reel, REEL_URL.format(reel_id=reel)))
+
+    assert len(scan["comments"]) == len(comments_in(canary()))
 
 
 # A real browser, on a page that behaves as Facebook's does
@@ -329,7 +401,10 @@ def test_a_real_browser_opens_the_comments_shows_all_opens_every_fold_and_finds_
         closed = browser.button_names()
         expanded = browser.expand(5)
 
-    names = [str(record["friendly_name"]) for record in expanded if record["kind"] == "graphql"]
+    def named(records: list[dict[str, Any]]) -> list[str]:
+        return [str(record["friendly_name"]) for record in records if record["kind"] == "graphql"]
+
+    names = named(expanded.records)
 
     assert [link.rsplit("/reel/", 1)[1] for link in links] == ["111/", "222/", "333/"]
     assert closed == ["Comment, 192 comments", "Comment, 5 comments"]
@@ -341,22 +416,28 @@ def test_a_real_browser_opens_the_comments_shows_all_opens_every_fold_and_finds_
         "Depth1CommentsListPaginationQuery",
     ]
     assert names[4:] == ["HiddenByYouQuery", "HiddenRepliesQuery"]
-    assert json.dumps(expanded).count("Depth1CommentsListPaginationQuery") == 1
+    assert named(expanded.opening) == ["CommentsRightRailQuery"]
+    assert named(expanded.shown)[0] == "AllCommentsQuery"
+    assert named(expanded.hidden) == ["HiddenByYouQuery", "HiddenRepliesQuery"]
+    assert json.dumps(expanded.records).count("Depth1CommentsListPaginationQuery") == 1
 
 
 # The commands
 
 
-@pytest.fixture
-def replayed(
+def replay(
     monkeypatch: pytest.MonkeyPatch,
+    page: list[dict[str, Any]],
+    expansion: Expansion | None = None,
 ) -> ReplayingBrowser:
-    """Stand the replaying browser in for Facebook, for the commands."""
+    """Stand a browser replaying one reel's page in for Facebook, for the commands."""
 
     import elder_sign.platforms.facebook.reader as reader
 
     reel = canary_reel()
-    browser = ReplayingBrowser({REEL_URL.format(reel_id=reel): canary()}, [f"/reel/{reel}/"])
+    browser = ReplayingBrowser(
+        {REEL_URL.format(reel_id=reel): page}, [f"/reel/{reel}/"], expanded=expansion
+    )
 
     @contextmanager
     def facebook(
@@ -367,6 +448,15 @@ def replayed(
     monkeypatch.setattr(reader, "facebook", facebook)
 
     return browser
+
+
+@pytest.fixture
+def replayed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> ReplayingBrowser:
+    """Stand the replaying canary in for Facebook, for the commands."""
+
+    return replay(monkeypatch, canary())
 
 
 def test_the_read_command_lists_recent_reels_and_their_counts(
@@ -405,6 +495,35 @@ def test_the_scan_command_keeps_what_it_read_where_only_its_owner_can_read_it(
     assert "4 top-level, 1 replies, 1 with a GIF" in printed
     assert len(scan["comments"]) == 5
     assert oct(out.stat().st_mode & 0o777) == "0o600"
+
+
+def test_the_scan_command_says_how_many_comments_facebook_counts_but_never_serves(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    from elder_sign.cli import main
+
+    replay(
+        monkeypatch,
+        recounted(canary(), 12),
+        Expansion(
+            opening=[notice("Most relevant is selected, so some comments may have been filtered.")],
+            shown=[notice("Some comments were filtered as spam.")],
+        ),
+    )
+    url = REEL_URL.format(reel_id=canary_reel())
+
+    assert main(["scan", "facebook", url, "--out", str(tmp_path / "scan.json")]) == 0
+
+    printed = capsys.readouterr().out
+
+    assert (
+        "5 visible + 0 hidden = 5; Facebook counts 12: "
+        "7 counted but not served (deleted, orphaned or from blocked accounts)."
+    ) in printed
+    assert "Facebook says: Some comments were filtered as spam." in printed
+    assert "Most relevant" not in printed
 
 
 def test_the_scan_command_refuses_a_link_that_is_not_a_reel(
