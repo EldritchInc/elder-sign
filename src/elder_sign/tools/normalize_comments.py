@@ -6,8 +6,13 @@ The input is one scan of one post, as a platform adapter reads it:
         {"id": "...", "parent_id": null, "author_id": "...", "text": "...",
          "mentions": ["Eris Discordia"], "media": [{"kind": "gif", "url": "..."}]}]}
 
+A scan may also carry the post's `caption`, and its `owner_id`: the
+person's own account. Both are passed on, for the model to be shown.
+
 The output is the same scan, each comment with its normalized text and its
-keys added. Nothing is read or written but the scan: this tool needs no state.
+keys added. A top-level comment's context is the post it is on, so a bare
+reaction is judged for each post. Nothing is read or written but the scan:
+this tool needs no state.
 """
 
 from typing import Any, Final
@@ -21,7 +26,7 @@ IMPLEMENTATION_ID: Final = "e1de7516-0000-4000-8000-000000000011"
 
 NAME: Final = "normalize_comments"
 
-VERSION: Final = "1.0.0"
+VERSION: Final = "1.1.0"
 
 DESCRIPTION: Final = (
     "Give every comment of one scan of a post its normalized text and the keys it is "
@@ -59,6 +64,8 @@ SCAN_SCHEMA: Final[JsonObject] = {
         "platform": {"type": "string", "minLength": 1},
         "post_id": {"type": "string", "minLength": 1},
         "comments": {"type": "array", "items": COMMENT_SCHEMA},
+        "caption": {"type": ["string", "null"]},
+        "owner_id": {"type": ["string", "null"]},
     },
     "required": ["platform", "post_id", "comments"],
 }
@@ -140,7 +147,7 @@ TEST_CASES: Final = (
                             "text": "t:26b2c115aba0788c9e7162af8bdf5d6b",
                             "media": [],
                             "content": "c:0505dd555b1ea82433da17fa0bcb51dd",
-                            "context": "x:8a457f850287dd2b8c79d6ccabb5412a",
+                            "context": "x:d0196340481503aadfaaaa52e9d836af",
                         },
                     }
                 ],
@@ -206,6 +213,7 @@ def run(
                         content,
                         None if parent is None else parent[3],
                         top_level=top_level,
+                        post=f"{scan['platform']}:{scan['post_id']}",
                     ),
                 },
             }

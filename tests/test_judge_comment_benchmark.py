@@ -53,9 +53,9 @@ def test_the_benchmark_is_canonical() -> None:
 
 
 def test_every_case_is_exact_on_one_verdict() -> None:
-    assert len(cases()) == 41
+    assert len(cases()) == 51
     assert {case["expected"]["comparison"] for case in cases()} == {"exact"}
-    assert expected() == {"hostile": 22, "friendly": 17, "uncertain": 2}
+    assert expected() == {"hostile": 27, "friendly": 22, "uncertain": 2}
 
 
 def test_the_policy_is_covered_area_by_area() -> None:
@@ -75,8 +75,12 @@ def test_the_policy_is_covered_area_by_area() -> None:
         "criticism",
         "neutral",
         "uncertain",
+        "ally",
+        "failure",
+        "reaction",
     }
     assert areas["criticism"] >= 5
+    assert areas["ally"] >= 2
 
 
 def test_the_same_reply_is_judged_by_what_it_replies_to() -> None:
@@ -90,6 +94,13 @@ def test_the_same_reply_is_judged_by_what_it_replies_to() -> None:
 
     for reply in ("lol exactly", "this 👆", "😂😂😂"):
         assert by_text[reply] == {"hostile", "friendly"}, reply
+
+
+def test_cases_show_what_her_post_says_and_what_she_wrote_herself() -> None:
+    items = [case["input"]["item"] for case in cases()]
+
+    assert sum(1 for item in items if item.get("caption")) >= 5
+    assert sum(1 for item in items if (item["parent"] or {}).get("by_her")) >= 2
 
 
 def test_every_case_is_an_item_as_a_map_gives_one() -> None:
@@ -139,4 +150,4 @@ def test_a_judge_that_always_says_one_verdict_passes_only_those_cases(
 
     output = cli(capsys, "benchmark", "run", BENCHMARK_ID, "--workflow", JUDGE_COMMENT_ID)
 
-    assert passed(output) == (41, expected()[verdict])
+    assert passed(output) == (51, expected()[verdict])

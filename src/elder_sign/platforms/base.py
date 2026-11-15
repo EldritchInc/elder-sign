@@ -60,6 +60,12 @@ class Scan(TypedDict):
     comment_count: NotRequired[int | None]
     """How many comments the platform counts on the post: replies, hidden and deleted included."""
 
+    caption: NotRequired[str | None]
+    """What the post says, so a bare reaction to it can be read for what it reacts to."""
+
+    owner_id: NotRequired[str | None]
+    """The person's own account, so a model is told which comments she wrote herself."""
+
 
 @dataclass(frozen=True)
 class Post:

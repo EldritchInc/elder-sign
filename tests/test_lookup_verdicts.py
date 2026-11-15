@@ -59,10 +59,11 @@ def comment(
 
 def keyed(
     *comments: dict[str, Any],
+    **post: Any,
 ) -> dict[str, Any]:
     """Return a scan of the comments, keyed by the built normalize_comments."""
 
-    scan = {"platform": "facebook", "post_id": "reel-1", "comments": list(comments)}
+    scan = {"platform": "facebook", "post_id": "reel-1", "comments": list(comments), **post}
     output = run_tool("normalize_comments", {"scan": scan})
     result: dict[str, Any] = output["scan"]
 
@@ -72,10 +73,13 @@ def keyed(
 def lookup(
     *comments: dict[str, Any],
     policy: str = POLICY,
+    **post: Any,
 ) -> dict[str, Any]:
     """Key a scan of the comments and look up their verdicts with the built tool."""
 
-    output = run_tool("lookup_verdicts", {"scan": keyed(*comments), "settings": {"policy": policy}})
+    output = run_tool(
+        "lookup_verdicts", {"scan": keyed(*comments, **post), "settings": {"policy": policy}}
+    )
     resolution: dict[str, Any] = output["resolution"]
 
     return resolution
@@ -175,6 +179,34 @@ def test_a_model_is_shown_neither_keys_nor_author_ids(
     (group,) = lookup(comment("c1", "hi", author_name="Kim", created_at="t"))["needs_inference"]
 
     assert group["comment"] == {"id": "c1", "author_name": "Kim", "text": "hi", "created_at": "t"}
+
+
+def test_a_model_is_shown_what_the_post_says(
+    state: sqlite3.Connection,
+) -> None:
+    (group,) = lookup(comment("c1", "have fun"), caption="Lesbian first date today")[
+        "needs_inference"
+    ]
+    (untold,) = lookup(comment("c1", "have fun"))["needs_inference"]
+
+    assert group["caption"] == "Lesbian first date today"
+    assert untold["caption"] is None
+
+
+def test_a_model_is_told_which_comments_she_wrote_herself(
+    state: sqlite3.Connection,
+) -> None:
+    (hers, answer, piling_on) = lookup(
+        comment("c1", "I am a woman", author="me"),
+        comment("c2", "no you are not", parent="c1"),
+        comment("c3", "lol exactly", parent="c2"),
+        owner_id="me",
+    )["needs_inference"]
+
+    assert hers["comment"]["by_her"] is True
+    assert answer["parent"]["by_her"] is True
+    assert "by_her" not in answer["comment"]
+    assert "by_her" not in piling_on["parent"]
 
 
 # Media, as a model is shown it

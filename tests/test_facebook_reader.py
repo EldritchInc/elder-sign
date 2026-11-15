@@ -297,6 +297,25 @@ def test_a_scan_opens_the_reel_expands_it_and_keeps_only_its_own_comments() -> N
     assert {post_id_of(comment["id"]) for comment in scan["comments"]} == {own_post}
 
 
+def test_a_scan_says_what_the_reel_says_and_whose_reel_it_is() -> None:
+    reel = canary_reel()
+    own_post = next(
+        details.post_id for details in posts_in(canary()).values() if details.reel_id == reel
+    )
+    caption = {
+        "kind": "graphql",
+        "payloads": [{"data": {"post_id": own_post, "message": {"text": "First date 💜"}}}],
+    }
+    browser = ReplayingBrowser(
+        {REEL_URL.format(reel_id=reel): canary()}, [], expanded=Expansion(opening=[caption])
+    )
+
+    scan = platform_on(browser).scan(Post("facebook", reel, REEL_URL.format(reel_id=reel)))
+
+    assert scan.get("caption") == "First date 💜"
+    assert scan.get("owner_id") == "382532529"
+
+
 def test_only_notices_given_while_all_comments_are_shown_are_reported() -> None:
     reel = canary_reel()
     preloaded = notice("Most relevant is selected, so some comments may have been filtered out.")

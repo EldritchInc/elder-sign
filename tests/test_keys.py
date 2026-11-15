@@ -181,6 +181,18 @@ def test_context_tells_one_reply_to_two_parents_apart() -> None:
     assert context_key(reply, None, top_level=True) != context_key(reply, "c:kind", top_level=False)
 
 
+def test_a_top_level_comment_means_what_it_does_on_its_own_post_only() -> None:
+    reaction = content_key("t:oh dear", [])
+
+    assert context_key(reaction, None, top_level=True, post="facebook:1") != context_key(
+        reaction, None, top_level=True, post="facebook:2"
+    )
+    assert context_key(reaction, None, top_level=True, post="facebook:1") == context_key(
+        reaction, None, top_level=True, post="facebook:1"
+    )
+    assert context_key(reaction, None, top_level=False, post="facebook:1") is None
+
+
 def test_a_reply_to_an_unknown_parent_or_without_content_has_no_context() -> None:
     assert context_key("c:x", None, top_level=False) is None
     assert context_key(None, "c:y", top_level=False) is None

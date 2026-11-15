@@ -567,3 +567,25 @@ def forget_flag(
     """Clear a flag; clearing one never set changes nothing."""
 
     connection.execute("DELETE FROM flags WHERE name = ?", (name,))
+
+
+def forget_model_verdicts(
+    connection: sqlite3.Connection,
+    policy: str | None = None,
+) -> int:
+    """Forget every verdict a model gave on comments, under one policy or all; return how many.
+
+    A human's verdicts are kept, and so are a model's verdicts on GIFs and
+    images on their own, which were judged by looking at them, not by the
+    words a prompt shows.
+    """
+
+    cursor = connection.execute(
+        """
+        DELETE FROM verdicts
+        WHERE source = 'model' AND key NOT LIKE 'm:%' AND (? IS NULL OR policy = ?)
+        """,
+        (policy, policy),
+    )
+
+    return int(cursor.rowcount)

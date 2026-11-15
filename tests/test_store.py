@@ -27,6 +27,7 @@ from elder_sign.shared.store import (
     connect,
     database_path,
     forget_flag,
+    forget_model_verdicts,
     forget_standing,
     forget_term,
     read_description,
@@ -317,6 +318,34 @@ def test_a_blank_description_is_refused(
 ) -> None:
     with pytest.raises(StoreError):
         write_description(state, "m:giphy:abc", "   ")
+
+
+# Forgetting what a model decided
+
+
+def test_a_models_verdicts_on_comments_are_forgotten_and_a_humans_kept(
+    state: sqlite3.Connection,
+) -> None:
+    write_verdict(state, "transphobia", "content", "c:1", MODEL_HOSTILE)
+    write_verdict(state, "transphobia", "context", "x:1", MODEL_FRIENDLY)
+    write_verdict(state, "transphobia", "content", "c:2", HUMAN_FRIENDLY)
+    write_verdict(state, "transphobia", "content", "m:giphy:1", MODEL_HOSTILE)
+
+    assert forget_model_verdicts(state) == 2
+    assert read_verdict(state, "transphobia", "content", "c:1") is None
+    assert read_verdict(state, "transphobia", "context", "x:1") is None
+    assert read_verdict(state, "transphobia", "content", "c:2") == HUMAN_FRIENDLY
+    assert read_verdict(state, "transphobia", "content", "m:giphy:1") == MODEL_HOSTILE
+
+
+def test_a_models_verdicts_are_forgotten_under_one_policy_only(
+    state: sqlite3.Connection,
+) -> None:
+    write_verdict(state, "transphobia", "content", "c:1", MODEL_HOSTILE)
+    write_verdict(state, "spam", "content", "c:1", MODEL_HOSTILE)
+
+    assert forget_model_verdicts(state, "spam") == 1
+    assert read_verdict(state, "transphobia", "content", "c:1") == MODEL_HOSTILE
 
 
 # Flags

@@ -18,7 +18,9 @@ hundred copies of one comment under one parent are asked about once. Each
 group carries one comment and its parent, as a model is shown them.
 
 A model is shown a comment's words and, for each GIF or image, its
-description from when `judge-media` looked at it, never the media itself. A
+description from when `judge-media` looked at it, never the media itself. It
+is shown what the post says, its `caption`, and which comments the person
+wrote herself, marked `by_her`, so her answers to trolls read as hers. A
 group whose comment or parent has media no model has described yet names it
 in `undescribed_media`, with the URL to fetch it from, so the scan can have
 it judged before the words beside it are.
@@ -47,7 +49,7 @@ IMPLEMENTATION_ID: Final = "e1de7516-0000-4000-8000-000000000042"
 
 NAME: Final = "lookup_verdicts"
 
-VERSION: Final = "1.1.0"
+VERSION: Final = "1.2.0"
 
 DESCRIPTION: Final = (
     "Decide every comment of a keyed scan that trusted and blocked authors, blocked terms and "
@@ -99,6 +101,7 @@ GROUP_SCHEMA: Final[JsonObject] = {
         "comment_ids": {"type": "array", "items": {"type": "string"}, "minItems": 1},
         "comment": {"type": "object"},
         "parent": {"type": ["object", "null"]},
+        "caption": {"type": ["string", "null"]},
     },
     "required": [
         "content_key",
@@ -107,6 +110,7 @@ GROUP_SCHEMA: Final[JsonObject] = {
         "comment_ids",
         "comment",
         "parent",
+        "caption",
     ],
 }
 
@@ -119,6 +123,8 @@ INPUT_SCHEMA: Final[JsonObject] = {
                 "platform": {"type": "string", "minLength": 1},
                 "post_id": {"type": "string", "minLength": 1},
                 "comments": {"type": "array", "items": {"type": "object"}},
+                "caption": {"type": ["string", "null"]},
+                "owner_id": {"type": ["string", "null"]},
             },
             "required": ["platform", "post_id", "comments"],
         },
@@ -166,14 +172,19 @@ def _shown(
     connection: sqlite3.Connection,
     comment: JsonObject,
     undescribed: dict[str, JsonObject],
+    owner_id: str | None,
 ) -> JsonObject:
     """Return the part of a comment a model is shown, noting media not yet described.
 
     Each GIF or image is shown as its kind and description; media no model
     has described is shown with no description, and noted in `undescribed`.
+    A comment the person wrote herself is marked `by_her`.
     """
 
     shown: JsonObject = {field: comment[field] for field in SHOWN_FIELDS if field in comment}
+
+    if owner_id is not None and str(comment.get("author_id")) == owner_id:
+        shown["by_her"] = True
     media: list[JsonObject] = []
 
     for item in comment.get("media") or ():
@@ -246,6 +257,9 @@ def run(
     scan: JsonObject = inputs["scan"]
     policy = str(inputs["settings"]["policy"])
     platform = str(scan["platform"])
+    caption = scan.get("caption")
+    owner = scan.get("owner_id")
+    owner_id = str(owner) if owner else None
     comments: list[JsonObject] = list(scan["comments"])
     by_id = {str(comment["id"]): comment for comment in comments}
 
@@ -294,10 +308,11 @@ def run(
                 "context_key": keys["context"],
                 "media_keys": list(keys["media"]),
                 "comment_ids": [str(comment["id"])],
-                "comment": _shown(connection, comment, undescribed),
+                "comment": _shown(connection, comment, undescribed, owner_id),
                 "parent": None
                 if parent is None or parent is comment
-                else _shown(connection, parent, undescribed),
+                else _shown(connection, parent, undescribed, owner_id),
+                "caption": str(caption) if caption else None,
             }
     finally:
         connection.close()

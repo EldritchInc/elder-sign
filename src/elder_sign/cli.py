@@ -346,6 +346,34 @@ def _judge(
     return 0
 
 
+def _forget_verdicts(
+    options: argparse.Namespace,
+) -> int:
+    """Forget what a model decided about comments, so they are judged again; keep yours."""
+
+    if not options.model:
+        print(
+            "Say which verdicts to forget: --model forgets a model's, never yours.",
+            file=sys.stderr,
+        )
+        return 1
+
+    connection = store.connect()
+
+    try:
+        forgotten = store.forget_model_verdicts(connection, options.policy)
+    finally:
+        connection.close()
+
+    print(
+        f"Forgot {_plural(forgotten, 'verdict', 'verdicts')} a model gave on comments. "
+        "Yours, and what a model saw in GIFs and images, are kept; "
+        "the next judge asks a model again."
+    )
+
+    return 0
+
+
 def _plural(
     count: int,
     one: str,
@@ -557,6 +585,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--hidden", action="store_true", help="Keep the browser window hidden."
     )
 
+    verdicts = commands.add_parser(
+        "verdicts",
+        help="Manage the verdicts Elder Sign remembers.",
+    )
+    verdict_commands = verdicts.add_subparsers(dest="verdicts_command", required=True)
+    forgetting = verdict_commands.add_parser(
+        "forget",
+        help="Forget verdicts, so the comments are judged again: a model's, never yours.",
+    )
+    forgetting.add_argument(
+        "--model", action="store_true", help="Forget every verdict a model gave on comments."
+    )
+    forgetting.add_argument("--policy", help="Forget only those under this policy.")
+
     canary = commands.add_parser(
         "canary",
         help="Check Facebook against a reel of yours, to know when it changed under Elder Sign.",
@@ -616,6 +658,9 @@ def main(
 
     if options.command == "judge":
         return _judge(options)
+
+    if options.command == "verdicts":
+        return _forget_verdicts(options)
 
     if options.command == "canary" and options.canary_command == "set":
         return _set_canary(options)

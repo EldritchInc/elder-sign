@@ -482,6 +482,30 @@ def test_the_judge_command_judges_and_keeps_the_verdicts_privately(
     assert oct(out.stat().st_mode & 0o777) == "0o600"
 
 
+def test_the_forget_command_forgets_a_models_verdicts_and_keeps_yours(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from elder_sign.cli import main
+    from elder_sign.shared.store import Verdict, read_verdict, write_verdict
+
+    path = tmp_path / "state.db"
+    monkeypatch.setenv(DATABASE_ENVIRONMENT_VARIABLE, str(path))
+    connection = connect(path)
+    model = Verdict(verdict="hostile", source="model", model="m", reason=None)
+    human = Verdict(verdict="friendly", source="human", model=None, reason=None)
+    write_verdict(connection, "transphobic-harassment", "content", "c:1", model)
+    write_verdict(connection, "transphobic-harassment", "content", "c:2", human)
+
+    assert main(["verdicts", "forget"]) == 1
+    assert main(["verdicts", "forget", "--model"]) == 0
+    assert "Forgot 1 verdict a model gave" in capsys.readouterr().out
+    assert read_verdict(connection, "transphobic-harassment", "content", "c:1") is None
+    assert read_verdict(connection, "transphobic-harassment", "content", "c:2") == human
+    connection.close()
+
+
 def test_the_judge_command_judges_nothing_while_frozen(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

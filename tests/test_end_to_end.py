@@ -275,7 +275,7 @@ def test_azathoth_verifies_a_tool_by_its_own_test_cases(
     state: sqlite3.Connection,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    output = cli(capsys, "tool", "verify", "--version", "1.0.0", NORMALIZE_COMMENTS)
+    output = cli(capsys, "tool", "verify", "--version", "1.1.0", NORMALIZE_COMMENTS)
 
     assert "Status: passed" in output
     assert "Failed: 0" in output

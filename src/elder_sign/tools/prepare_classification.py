@@ -11,10 +11,12 @@ unchanged for `assemble_judgment`:
 - `comment`: the comment's words, quoted as a JSON string so nothing in them
   can pass for the prompt's own words, then each GIF or image as its
   description: `"lol exactly" [GIF: a clown honking a horn]`;
-- `thread`: what the comment replies to: the post itself, another comment,
-  written the same way, or a comment that can no longer be seen.
+- `thread`: what her post says, quoted, when it is known; then what the
+  comment replies to: the post itself, another comment written the same
+  way, saying so when she wrote it herself, or a comment that can no longer
+  be seen.
 
-Words are cut to `MAXIMUM_TEXT_LENGTH` characters, so a wall of text cannot
+Words and captions are cut to `MAXIMUM_TEXT_LENGTH` characters, so a wall of text cannot
 crowd the policy out of a model's attention.
 """
 
@@ -29,7 +31,7 @@ IMPLEMENTATION_ID: Final = "e1de7516-0000-4000-8000-000000000071"
 
 NAME: Final = "prepare_classification"
 
-VERSION: Final = "1.0.0"
+VERSION: Final = "1.1.0"
 
 DESCRIPTION: Final = (
     "Write one group of comments as a model is shown it: the comment's words, quoted, with "
@@ -45,6 +47,10 @@ KINDS: Final = {"gif": "GIF", "image": "image", "photo": "image", "sticker": "st
 TOP_LEVEL: Final = "It is a top-level comment on her post, replying to the post itself."
 
 REPLY: Final = "It replies to this comment on her post:"
+
+REPLY_TO_HER: Final = "It replies to this comment she wrote herself on her post:"
+
+POST: Final = "Her post says:"
 
 ORPHAN: Final = "It replies to a comment on her post that can no longer be seen."
 
@@ -108,6 +114,17 @@ TEST_CASES: Final = (
 )
 
 
+def quoted(
+    text: str,
+) -> str:
+    """Return words quoted as a JSON string, cut to `MAXIMUM_TEXT_LENGTH` characters."""
+
+    if len(text) > MAXIMUM_TEXT_LENGTH:
+        text = text[:MAXIMUM_TEXT_LENGTH] + "…"
+
+    return json.dumps(text, ensure_ascii=False)
+
+
 def written(
     comment: JsonObject,
 ) -> str:
@@ -117,10 +134,7 @@ def written(
     text = str(comment.get("text") or "").strip()
 
     if text:
-        if len(text) > MAXIMUM_TEXT_LENGTH:
-            text = text[:MAXIMUM_TEXT_LENGTH] + "…"
-
-        parts.append(json.dumps(text, ensure_ascii=False))
+        parts.append(quoted(text))
 
     for item in comment.get("media") or ():
         kind = str(item.get("kind") or "").strip().lower()
@@ -140,10 +154,15 @@ def run(
     parent = group.get("parent")
 
     if parent:
-        thread = f"{REPLY}\n{written(parent)}"
+        thread = f"{REPLY_TO_HER if parent.get('by_her') else REPLY}\n{written(parent)}"
     elif group.get("context_key") is not None:
         thread = TOP_LEVEL
     else:
         thread = ORPHAN
+
+    caption = str(group.get("caption") or "").strip()
+
+    if caption:
+        thread = f"{POST}\n{quoted(caption)}\n\n{thread}"
 
     return {"comment": written(group["comment"]), "thread": thread, "group": group}

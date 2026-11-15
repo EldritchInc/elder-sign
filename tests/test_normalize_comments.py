@@ -60,6 +60,42 @@ def test_a_swarms_copy_pastes_share_their_content_key() -> None:
     assert keyed["c3"]["normalized"] == "tranny"
 
 
+def keyed_scan(
+    scan: dict[str, Any],
+) -> dict[str, Any]:
+    """Run the built tool on one whole scan, returning what it returns."""
+
+    (implementation,) = decode_tool_document(DOCUMENT.read_text(encoding="utf-8")).implementations
+    output = asyncio.run(ProcessToolExecutor().execute(implementation, {"scan": scan}))
+
+    return cast(dict[str, Any], output["scan"])
+
+
+def test_the_posts_caption_and_owner_are_passed_on() -> None:
+    scan = {
+        "platform": "facebook",
+        "post_id": "reel-1",
+        "caption": "Lesbian first date today 💜",
+        "owner_id": "me",
+        "comments": [comment("c1", "have fun")],
+    }
+
+    keyed = keyed_scan(scan)
+
+    assert keyed["caption"] == "Lesbian first date today 💜"
+    assert keyed["owner_id"] == "me"
+
+
+def test_a_top_level_comment_has_one_context_per_post() -> None:
+    def context(post_id: str) -> str:
+        scan = {"platform": "facebook", "post_id": post_id, "comments": [comment("c1", "oh dear")]}
+
+        return str(keyed_scan(scan)["comments"][0]["keys"]["context"])
+
+    assert context("reel-1") != context("reel-2")
+    assert context("reel-1") == context("reel-1")
+
+
 def test_a_comment_keeps_every_field_the_adapter_gave_it() -> None:
     keyed = normalize([comment("c1", "hi", author_name="Kim", created_at="2026-11-14T22:00:00Z")])
 

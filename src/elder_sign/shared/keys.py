@@ -284,19 +284,21 @@ def context_key(
     parent_content: str | None,
     *,
     top_level: bool,
+    post: str | None = None,
 ) -> str | None:
     """Return the key of a comment's content in reply to its parent's.
 
-    A top-level comment replies to the post. A reply whose parent's content
-    is unknown has no context key: two such replies may answer different
-    things.
+    A top-level comment replies to the post, so its context is that post,
+    named by `post`: "oh dear" under a date means something else under a
+    loss. A reply whose parent's content is unknown has no context key: two
+    such replies may answer different things.
     """
 
     if content is None:
         return None
 
     if top_level:
-        return f"x:{_digest(content, 'post')}"
+        return f"x:{_digest(content, f'post:{post}' if post else 'post')}"
 
     if parent_content is None:
         return None

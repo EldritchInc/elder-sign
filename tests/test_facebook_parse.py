@@ -296,6 +296,20 @@ def test_a_posts_pieces_are_put_together_by_its_post_id() -> None:
     assert "2" not in posts
 
 
+def test_a_posts_caption_is_read_from_its_message() -> None:
+    payload = [
+        {"post_id": "1", "message": {"text": "Lesbian first date today 💜", "ranges": []}},
+        {"post_id": "2", "message": {"text": "   "}},
+        {"post_id": "3", "message": None, "creation_time": 0},
+    ]
+
+    posts = posts_in(records(payload))
+
+    assert posts["1"].caption == "Lesbian first date today 💜"
+    assert "2" not in posts
+    assert posts["3"].caption is None
+
+
 def test_the_canary_reels_post_is_known_by_its_reel() -> None:
     reel = canary()[0]["url"].rstrip("/").rsplit("/", 1)[1]
     (own,) = [details for details in posts_in(canary()).values() if details.reel_id == reel]

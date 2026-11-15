@@ -3,7 +3,7 @@
     "id": "e1de7516-0000-4000-8000-000000000400",
     "name": "moderate scan",
     "description": "Judge every comment of one scan of a post under the transphobic-harassment policy: decide what trusted and blocked authors, blocked terms and remembered verdicts can, ask classify-comment about each distinct comment that is left, remember what it says, and give every comment its one verdict.",
-    "version": "1.0.0"
+    "version": "1.1.0"
   },
   "steps": [
     {
@@ -11,7 +11,7 @@
       "specification": {
         "requirement": {
           "name": "normalize_comments",
-          "version": "1.0.0",
+          "version": "1.1.0",
           "runtime": "process"
         }
       },
@@ -47,7 +47,7 @@
       "specification": {
         "requirement": {
           "name": "lookup_verdicts",
-          "version": "1.1.0",
+          "version": "1.2.0",
           "runtime": "process"
         }
       },

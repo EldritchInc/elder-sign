@@ -5,7 +5,14 @@ from typing import Any
 import pytest
 
 from elder_sign.policy import TRANSPHOBIC_HARASSMENT
-from elder_sign.tools.prepare_classification import MAXIMUM_TEXT_LENGTH, ORPHAN, REPLY, TOP_LEVEL
+from elder_sign.tools.prepare_classification import (
+    MAXIMUM_TEXT_LENGTH,
+    ORPHAN,
+    POST,
+    REPLY,
+    REPLY_TO_HER,
+    TOP_LEVEL,
+)
 from tests.test_lookup_verdicts import GIF, comment, lookup, state
 from tests.tools import run_tool
 
@@ -111,6 +118,26 @@ def test_a_reply_shows_its_parent_written_the_same_way() -> None:
 
 def test_a_reply_whose_parent_is_gone_says_so() -> None:
     assert prepare(group(context_key=None))["thread"] == ORPHAN
+
+
+def test_a_reply_to_her_own_comment_says_she_wrote_it() -> None:
+    parent = {"id": "p1", "text": "I am a woman", "by_her": True}
+
+    assert prepare(group(parent=parent))["thread"] == f'{REPLY_TO_HER}\n"I am a woman"'
+
+
+def test_what_her_post_says_comes_first_quoted() -> None:
+    thread = prepare(group(caption='Lesbian first date today "committed to the bit"'))["thread"]
+
+    assert thread == (
+        f'{POST}\n"Lesbian first date today \\"committed to the bit\\""\n\n{TOP_LEVEL}'
+    )
+
+
+def test_a_long_caption_is_cut_short() -> None:
+    thread = prepare(group(caption="purple " * 1000))["thread"]
+
+    assert len(thread) < MAXIMUM_TEXT_LENGTH + len(POST) + len(TOP_LEVEL) + 10
 
 
 # The group

@@ -1,8 +1,8 @@
 {
   "id": "e1de7516-0000-4000-8000-000000000500",
   "name": "judge comment",
-  "description": "Judge comments exactly against the transphobic-harassment policy: clear harassment, dogwhistles, misgendering, insults to her looks and sanity, injection attempts and hateful memes; support, criticism and disagreement that must stay visible; replies whose meaning depends on what they answer; and bare words a stranger's intent cannot be read from.",
-  "version": "1.0.0",
+  "description": "Judge comments exactly against the transphobic-harassment policy: clear harassment, dogwhistles, misgendering, insults to her looks and sanity, injection attempts and hateful memes; support, criticism and disagreement that must stay visible; replies whose meaning depends on what they answer; and bare words a stranger's intent cannot be read from; allies sharp with trolls, feigned confusion, wishing her date to fail, bare reactions to what her post says, and replies to what she wrote herself.",
+  "version": "1.1.0",
   "cases": [
     {
       "id": "e1de7516-0000-4000-8000-000000000501",
@@ -1201,6 +1201,306 @@
       "metadata": {
         "area": "uncertain",
         "replying": false
+      }
+    },
+    {
+      "id": "e1de7516-0000-4000-8000-00000000052a",
+      "input": {
+        "item": {
+          "content_key": "c:case-42",
+          "context_key": "x:case-42",
+          "media_keys": [],
+          "comment_ids": [
+            "c1"
+          ],
+          "comment": {
+            "id": "c1",
+            "text": "go read a biology book from this century, you absolute clown"
+          },
+          "parent": {
+            "id": "p1",
+            "text": "you will never be a woman"
+          }
+        },
+        "index": 0
+      },
+      "expected": {
+        "description": "An ally may be harsh with a troll.",
+        "value": "friendly",
+        "comparison": "exact"
+      },
+      "metadata": {
+        "area": "ally",
+        "replying": true
+      }
+    },
+    {
+      "id": "e1de7516-0000-4000-8000-00000000052b",
+      "input": {
+        "item": {
+          "content_key": "c:case-43",
+          "context_key": "x:case-43",
+          "media_keys": [],
+          "comment_ids": [
+            "c1"
+          ],
+          "comment": {
+            "id": "c1",
+            "text": "the point flew so far over your head it's in orbit, sweetie"
+          },
+          "parent": {
+            "id": "p1",
+            "text": "so which one of you is the man"
+          }
+        },
+        "index": 0
+      },
+      "expected": {
+        "description": "Mocking a troll in her defense is friendly.",
+        "value": "friendly",
+        "comparison": "exact"
+      },
+      "metadata": {
+        "area": "ally",
+        "replying": true
+      }
+    },
+    {
+      "id": "e1de7516-0000-4000-8000-00000000052c",
+      "input": {
+        "item": {
+          "content_key": "c:case-44",
+          "context_key": "x:case-44",
+          "media_keys": [],
+          "comment_ids": [
+            "c1"
+          ],
+          "comment": {
+            "id": "c1",
+            "text": "wait... a lesbian date?? I'm so confused 🤔"
+          },
+          "parent": null,
+          "caption": "First date with a lesbian today 💜 she chose purple, so I did too"
+        },
+        "index": 0
+      },
+      "expected": {
+        "description": "Feigned confusion at her being a lesbian questions that she is a woman.",
+        "value": "hostile",
+        "comparison": "exact"
+      },
+      "metadata": {
+        "area": "womanhood",
+        "replying": false
+      }
+    },
+    {
+      "id": "e1de7516-0000-4000-8000-00000000052d",
+      "input": {
+        "item": {
+          "content_key": "c:case-45",
+          "context_key": "x:case-45",
+          "media_keys": [],
+          "comment_ids": [
+            "c1"
+          ],
+          "comment": {
+            "id": "c1",
+            "text": "real lesbians are same sex attracted only 🙄"
+          },
+          "parent": null,
+          "caption": "First date with a lesbian today 💜 she chose purple, so I did too"
+        },
+        "index": 0
+      },
+      "expected": {
+        "description": "\"Same-sex attracted\" is a dogwhistle aimed at her being trans.",
+        "value": "hostile",
+        "comparison": "exact"
+      },
+      "metadata": {
+        "area": "dogwhistle",
+        "replying": false
+      }
+    },
+    {
+      "id": "e1de7516-0000-4000-8000-00000000052e",
+      "input": {
+        "item": {
+          "content_key": "c:case-46",
+          "context_key": "x:case-46",
+          "media_keys": [],
+          "comment_ids": [
+            "c1"
+          ],
+          "comment": {
+            "id": "c1",
+            "text": "does she know you're trans tho?"
+          },
+          "parent": null,
+          "caption": "First date with a lesbian today 💜 she chose purple, so I did too"
+        },
+        "index": 0
+      },
+      "expected": {
+        "description": "Asking whether her date knows implies she is deceiving her.",
+        "value": "hostile",
+        "comparison": "exact"
+      },
+      "metadata": {
+        "area": "womanhood",
+        "replying": false
+      }
+    },
+    {
+      "id": "e1de7516-0000-4000-8000-00000000052f",
+      "input": {
+        "item": {
+          "content_key": "c:case-47",
+          "context_key": "x:case-47",
+          "media_keys": [],
+          "comment_ids": [
+            "c1"
+          ],
+          "comment": {
+            "id": "c1",
+            "text": "good luck, you'll need it. this won't end well"
+          },
+          "parent": null,
+          "caption": "First date with a lesbian today 💜 she chose purple, so I did too"
+        },
+        "index": 0
+      },
+      "expected": {
+        "description": "Predicting her date will fail is wishing her failure.",
+        "value": "hostile",
+        "comparison": "exact"
+      },
+      "metadata": {
+        "area": "failure",
+        "replying": false
+      }
+    },
+    {
+      "id": "e1de7516-0000-4000-8000-000000000530",
+      "input": {
+        "item": {
+          "content_key": "c:case-48",
+          "context_key": "x:case-48",
+          "media_keys": [],
+          "comment_ids": [
+            "c1"
+          ],
+          "comment": {
+            "id": "c1",
+            "text": "have fun!! 🪩"
+          },
+          "parent": null,
+          "caption": "First date with a lesbian today 💜 she chose purple, so I did too"
+        },
+        "index": 0
+      },
+      "expected": {
+        "description": "A short reaction to her date is friendly.",
+        "value": "friendly",
+        "comparison": "exact"
+      },
+      "metadata": {
+        "area": "reaction",
+        "replying": false
+      }
+    },
+    {
+      "id": "e1de7516-0000-4000-8000-000000000531",
+      "input": {
+        "item": {
+          "content_key": "c:case-49",
+          "context_key": "x:case-49",
+          "media_keys": [],
+          "comment_ids": [
+            "c1"
+          ],
+          "comment": {
+            "id": "c1",
+            "text": "omg!"
+          },
+          "parent": null,
+          "caption": "First date with a lesbian today 💜 she chose purple, so I did too"
+        },
+        "index": 0
+      },
+      "expected": {
+        "description": "A bare exclamation at good news is friendly.",
+        "value": "friendly",
+        "comparison": "exact"
+      },
+      "metadata": {
+        "area": "reaction",
+        "replying": false
+      }
+    },
+    {
+      "id": "e1de7516-0000-4000-8000-000000000532",
+      "input": {
+        "item": {
+          "content_key": "c:case-50",
+          "context_key": "x:case-50",
+          "media_keys": [],
+          "comment_ids": [
+            "c1"
+          ],
+          "comment": {
+            "id": "c1",
+            "text": "lol no you're not"
+          },
+          "parent": {
+            "id": "p1",
+            "text": "I am a woman, and she knows it",
+            "by_her": true
+          }
+        },
+        "index": 0
+      },
+      "expected": {
+        "description": "Denying what she wrote about herself is hostile.",
+        "value": "hostile",
+        "comparison": "exact"
+      },
+      "metadata": {
+        "area": "context",
+        "replying": true
+      }
+    },
+    {
+      "id": "e1de7516-0000-4000-8000-000000000533",
+      "input": {
+        "item": {
+          "content_key": "c:case-51",
+          "context_key": "x:case-51",
+          "media_keys": [],
+          "comment_ids": [
+            "c1"
+          ],
+          "comment": {
+            "id": "c1",
+            "text": "so happy for you both!!"
+          },
+          "parent": {
+            "id": "p1",
+            "text": "we talked for seven hours and we're seeing each other again",
+            "by_her": true
+          }
+        },
+        "index": 0
+      },
+      "expected": {
+        "description": "Cheering her own good news is friendly.",
+        "value": "friendly",
+        "comparison": "exact"
+      },
+      "metadata": {
+        "area": "support",
+        "replying": true
       }
     }
   ]

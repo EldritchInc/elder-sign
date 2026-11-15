@@ -293,9 +293,13 @@ class FacebookPlatform:
         details = self.details_of(post.post_id, visited)
         count = details.comment_count if details else None
         expansion = self._browser.expand(count)
+        records = visited + expansion.records
         self.notices = filtering_notices(expansion.shown)
-        scan = self._own_comments(post.post_id, visited + expansion.records)
+        scan = self._own_comments(post.post_id, records)
+        everything = self.details_of(post.post_id, records)
         scan["comment_count"] = count
+        scan["caption"] = everything.caption if everything else None
+        scan["owner_id"] = self.account_id
 
         return scan
 

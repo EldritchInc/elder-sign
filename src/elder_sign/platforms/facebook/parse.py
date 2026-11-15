@@ -13,7 +13,7 @@ what it reads by what it is, wherever it sits:
   it is hidden from everyone else, by the person or by their keyword filter;
 - a **post** is any object with a `post_id`: beside it, one object holds its
   reel's `url` and its `feedback.total_comment_count`, which counts replies
-  too, and another its `creation_time`.
+  too, and another its `creation_time` and its caption, `message.text`.
 
 A GIF from Giphy reaches the browser wrapped in Facebook's own CDN URL, the
 Giphy URL in its `url` parameter; the Giphy URL is unwrapped, so a GIF is the
@@ -316,6 +316,7 @@ class PostDetails:
     reel_id: str | None = None
     created: datetime | None = None
     comment_count: int | None = None
+    caption: str | None = None
 
 
 REEL_PATH: Final = re.compile(r"/reel/(\d+)")
@@ -347,6 +348,8 @@ def posts_in(
             count = feedback.get("total_comment_count") if isinstance(feedback, dict) else None
             created = value.get("creation_time")
             url = value.get("url")
+            message = value.get("message")
+            caption = message.get("text") if isinstance(message, dict) else None
 
             if isinstance(count, int) and not isinstance(count, bool):
                 details["comment_count"] = count
@@ -356,6 +359,9 @@ def posts_in(
 
             if isinstance(url, str) and (reel := REEL_PATH.search(url)):
                 details["reel_id"] = reel.group(1)
+
+            if isinstance(caption, str) and caption.strip():
+                details["caption"] = caption.strip()
 
     return {
         post_id: PostDetails(post_id=post_id, **details)
