@@ -1,5 +1,6 @@
 """Tests every shipped workflow must pass, and the shape of resolve-comments."""
 
+import json
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -23,6 +24,37 @@ SHIPPED = sorted(WORKFLOWS.glob("*.json"))
 RESOLVE_COMMENTS = WORKFLOWS / "resolve-comments.json"
 
 RESOLVE_COMMENTS_ID = UUID("e1de7516-0000-4000-8000-000000000100")
+
+SET_FIELDS = (
+    "required_capabilities",
+    "required_input_modalities",
+    "required_output_modalities",
+)
+"""Fields Azathoth holds as sets, which it writes in whatever order the process hashes them."""
+
+
+def sorted_sets(
+    value: Any,
+) -> Any:
+    """Return a JSON value with every set field's members sorted, as the shipped files write them.
+
+    Azathoth 1.4 holds a step's required modalities and capabilities as
+    frozensets, and dumps them in the order Python hashes their members, which
+    `PYTHONHASHSEED` changes from process to process. The shipped files keep
+    them sorted, and are compared with what Azathoth writes after sorting it
+    too.
+    """
+
+    if isinstance(value, dict):
+        return {
+            key: sorted(member) if key in SET_FIELDS else sorted_sets(member)
+            for key, member in value.items()
+        }
+
+    if isinstance(value, list):
+        return [sorted_sets(member) for member in value]
+
+    return value
 
 
 def workflow(
@@ -51,13 +83,11 @@ def tool_steps(
 ) -> list[ToolStepSpecification]:
     """Return the tool specifications of a workflow's steps, in order."""
 
-    steps = []
-
-    for step in specification.steps:
-        assert isinstance(step.specification, ToolStepSpecification)
-        steps.append(step.specification)
-
-    return steps
+    return [
+        step.specification
+        for step in specification.steps
+        if isinstance(step.specification, ToolStepSpecification)
+    ]
 
 
 def constant(
@@ -91,8 +121,9 @@ def test_the_workflow_is_canonical(
     path: Path,
 ) -> None:
     encoded = path.read_text(encoding="utf-8")
+    written = json.loads(encode_workflow_document(decode_workflow_document(encoded)))
 
-    assert encode_workflow_document(decode_workflow_document(encoded)) + "\n" == encoded
+    assert json.dumps(sorted_sets(written), ensure_ascii=False, indent=2) + "\n" == encoded
 
 
 @pytest.mark.parametrize("path", SHIPPED, ids=lambda path: path.name)

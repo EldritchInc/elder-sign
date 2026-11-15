@@ -1,0 +1,76 @@
+{
+  "metadata": {
+    "id": "e1de7516-0000-4000-8000-000000000200",
+    "name": "judge media",
+    "description": "Describe one GIF frame or image a comment posted, and decide whether it is hostile in itself under the transphobic-harassment policy. Its input is the image.",
+    "version": "1.0.0"
+  },
+  "steps": [
+    {
+      "id": "e1de7516-0000-4000-8000-000000000201",
+      "specification": {
+        "metadata": {
+          "id": "e1de7516-0000-4000-8000-000000000202",
+          "name": "Judge media",
+          "description": "Describe an image a comment posted, and decide whether it is hostile in itself.",
+          "version": "1.0.0"
+        },
+        "template": {
+          "text": "You are helping a trans woman keep harassment off her social media posts. Someone replied to one of her posts with the GIF or image shown below.\n\nThe post belongs to a trans woman. Something is HOSTILE when it does any of these:\n- expresses transphobia: slurs, saying trans women are men, mocking trans people, or dogwhistles such as \"41%\", \"XY\", \"groomer\", \"what is a woman\" or clown emoji aimed at her being trans;\n- intentionally misgenders her: calling her sir, bro, dude, man, he or him, or using a name she does not go by;\n- questions that she is a woman: \"you will never be a woman\", \"real women don't\", \"nice try, man\";\n- insults how she looks: ugly, gross, manly, \"looks like a linebacker\";\n- insults her sanity: deranged, insane, crazy, mentally ill, delusional, or \"get therapy\" as a jab.\n\nSomething is FRIENDLY when it does none of those. Disagreeing with her, criticizing her music, opinions or work, saying a post is not for them, and affectionate teasing between friends such as \"yes sir!\" as hype are all friendly: Elder Sign never silences criticism, only harassment.\n\nSomething is UNCERTAIN when you cannot tell whether it is aimed at her or meant to harm, such as a bare \"sir\" from a stranger, or sarcasm that could be read either way.\n\nThe image:\n{image}\n\nFirst describe what the image shows in one or two plain sentences, including any words written in it, so someone who cannot see it understands what it says. Then decide whether the image is HOSTILE in itself, whatever words might be posted beside it. A reaction GIF that only means something with the words beside it, such as laughing or eye-rolling, is not hostile in itself.\n\nReply with one JSON object and no other text:\n{{\"description\": \"<one or two sentences>\", \"hostile\": false, \"reason\": \"<a few words>\"}}",
+          "bindings": [
+            {
+              "variable_name": "image",
+              "input_name": "image"
+            }
+          ]
+        },
+        "model_selection": {
+          "requirements": {
+            "required_capabilities": [],
+            "required_input_modalities": [
+              "image",
+              "text"
+            ],
+            "required_output_modalities": [
+              "text"
+            ],
+            "minimum_context_window_tokens": null,
+            "minimum_output_tokens": null,
+            "maximum_input_usd_per_million_tokens": null,
+            "maximum_output_usd_per_million_tokens": null,
+            "require_known_pricing": false
+          }
+        },
+        "output_format": "json"
+      },
+      "depends_on": [],
+      "inputs": [
+        {
+          "name": "image",
+          "source": {
+            "event_type": "workflow.input.received",
+            "field_name": "input"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "judgment",
+          "path": []
+        }
+      ],
+      "conditions": [],
+      "retry_policy": {
+        "max_attempts": 2,
+        "initial_delay_seconds": 0.0,
+        "backoff_multiplier": 1.0,
+        "maximum_delay_seconds": null
+      },
+      "failure_policy": "fail_workflow",
+      "message": "Looking at the image"
+    }
+  ],
+  "result": {
+    "name": "judgment"
+  }
+}

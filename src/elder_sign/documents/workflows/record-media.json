@@ -1,0 +1,55 @@
+{
+  "metadata": {
+    "id": "e1de7516-0000-4000-8000-000000000210",
+    "name": "record media",
+    "description": "Remember a judge-media judgment of one GIF or image under its media key: its description for every policy, and its hostility under the transphobic-harassment policy. Uses no model.",
+    "version": "1.0.0"
+  },
+  "steps": [
+    {
+      "id": "e1de7516-0000-4000-8000-000000000211",
+      "specification": {
+        "requirement": {
+          "name": "record_media",
+          "version": "1.0.0",
+          "runtime": "process"
+        }
+      },
+      "depends_on": [],
+      "inputs": [
+        {
+          "name": "media",
+          "source": {
+            "event_type": "workflow.input.received",
+            "field_name": "input"
+          }
+        },
+        {
+          "name": "settings",
+          "source": {
+            "value": {
+              "policy": "transphobic-harassment"
+            }
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "recorded",
+          "path": []
+        }
+      ],
+      "conditions": [],
+      "retry_policy": {
+        "max_attempts": 1,
+        "initial_delay_seconds": 0.0,
+        "backoff_multiplier": 1.0,
+        "maximum_delay_seconds": null
+      },
+      "failure_policy": "fail_workflow"
+    }
+  ],
+  "result": {
+    "name": "recorded"
+  }
+}

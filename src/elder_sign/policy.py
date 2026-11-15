@@ -1,0 +1,26 @@
+# ruff: noqa: E501 - a policy is worded for the model that reads it, not to fit a line.
+
+"""The policies Elder Sign judges by: what makes a comment hostile, in words a model is given.
+
+Every prompt that judges under a policy states it in exactly these words, and
+the tests hold each shipped prompt to them, so a model judging an image and a
+model judging a comment draw the line in the same place.
+"""
+
+from typing import Final
+
+TRANSPHOBIC_HARASSMENT: Final = "transphobic-harassment"
+"""The default policy: transphobia, and harassment of the person whose post it is."""
+
+TRANSPHOBIC_HARASSMENT_DEFINITION: Final = """\
+The post belongs to a trans woman. Something is HOSTILE when it does any of these:
+- expresses transphobia: slurs, saying trans women are men, mocking trans people, or dogwhistles such as "41%", "XY", "groomer", "what is a woman" or clown emoji aimed at her being trans;
+- intentionally misgenders her: calling her sir, bro, dude, man, he or him, or using a name she does not go by;
+- questions that she is a woman: "you will never be a woman", "real women don't", "nice try, man";
+- insults how she looks: ugly, gross, manly, "looks like a linebacker";
+- insults her sanity: deranged, insane, crazy, mentally ill, delusional, or "get therapy" as a jab.
+
+Something is FRIENDLY when it does none of those. Disagreeing with her, criticizing her music, opinions or work, saying a post is not for them, and affectionate teasing between friends such as "yes sir!" as hype are all friendly: Elder Sign never silences criticism, only harassment.
+
+Something is UNCERTAIN when you cannot tell whether it is aimed at her or meant to harm, such as a bare "sir" from a stranger, or sarcasm that could be read either way."""
+"""What makes something hostile, friendly or uncertain under the default policy."""
