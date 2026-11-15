@@ -21,26 +21,30 @@ from elder_sign.shared.store import (
     MIGRATIONS,
     SCHEMA_VERSION,
     Fingerprint,
+    Flag,
     StoreError,
     Verdict,
     connect,
     database_path,
+    forget_flag,
     forget_standing,
     forget_term,
     read_description,
     read_fingerprint,
+    read_flag,
     read_standing,
     read_terms,
     read_verdict,
     transaction,
     write_description,
     write_fingerprint,
+    write_flag,
     write_standing,
     write_term,
     write_verdict,
 )
 
-TABLES = {"actions", "authors", "media", "posts", "terms", "verdicts"}
+TABLES = {"actions", "authors", "flags", "media", "posts", "terms", "verdicts"}
 
 MODEL_HOSTILE = Verdict(verdict="hostile", source="model", model="m", reason="slur")
 
@@ -161,7 +165,7 @@ def test_a_file_at_an_older_schema_is_migrated_and_keeps_what_it_kept(
     try:
         (version,) = connection.execute("PRAGMA user_version").fetchone()
 
-        assert version == SCHEMA_VERSION == 2
+        assert version == SCHEMA_VERSION == 3
         assert tables(connection) == TABLES
         assert read_terms(connection, "transphobia") == ("slur",)
     finally:
@@ -313,6 +317,75 @@ def test_a_blank_description_is_refused(
 ) -> None:
     with pytest.raises(StoreError):
         write_description(state, "m:giphy:abc", "   ")
+
+
+# Flags
+
+
+def test_a_flag_is_kept_with_its_reason_and_replaced(
+    state: sqlite3.Connection,
+) -> None:
+    assert read_flag(state, "frozen:facebook") is None
+
+    write_flag(state, "frozen:facebook", "frozen", reason="the canary lost its replies")
+    first = read_flag(state, "frozen:facebook")
+    write_flag(state, "frozen:facebook", "frozen", reason="the canary lost its GIF")
+    second = read_flag(state, "frozen:facebook")
+
+    assert isinstance(first, Flag)
+    assert first.value == "frozen"
+    assert first.reason == "the canary lost its replies"
+    assert first.recorded_at
+    assert second is not None
+    assert second.reason == "the canary lost its GIF"
+
+
+def test_a_flag_is_forgotten_and_forgetting_one_never_set_is_harmless(
+    state: sqlite3.Connection,
+) -> None:
+    write_flag(state, "frozen:facebook", "frozen")
+
+    forget_flag(state, "frozen:facebook")
+    forget_flag(state, "frozen:instagram")
+
+    assert read_flag(state, "frozen:facebook") is None
+
+
+@pytest.mark.parametrize(("name", "value"), [("", "x"), ("  ", "x"), ("frozen:facebook", "")])
+def test_a_flag_needs_a_name_and_a_value(
+    state: sqlite3.Connection,
+    name: str,
+    value: str,
+) -> None:
+    with pytest.raises(StoreError):
+        write_flag(state, name, value)
+
+
+def test_a_file_at_schema_version_2_gains_flags_and_keeps_its_media(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "state.db"
+    raw = sqlite3.connect(path, isolation_level=None)
+
+    for script in MIGRATIONS[:2]:
+        for statement in script.split(";"):
+            if statement.strip():
+                raw.execute(statement)
+
+    raw.execute("PRAGMA user_version = 2")
+    raw.execute(
+        "INSERT INTO media (media_key, description, recorded_at) VALUES ('m:1', 'a wave', 'then')"
+    )
+    raw.close()
+
+    connection = connect(path)
+
+    try:
+        assert tables(connection) == TABLES
+        assert read_description(connection, "m:1") == "a wave"
+        assert read_flag(connection, "frozen:facebook") is None
+    finally:
+        connection.close()
 
 
 # Writing together

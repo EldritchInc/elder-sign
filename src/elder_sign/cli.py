@@ -7,7 +7,9 @@ import sys
 from collections import Counter
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Final
 
+from elder_sign import canary as canaries
 from elder_sign import scrub
 from elder_sign.browser import BrowserError, BrowserSettings, profile_path
 from elder_sign.platforms import Post
@@ -15,8 +17,12 @@ from elder_sign.platforms.facebook import capture as facebook_capture
 from elder_sign.platforms.facebook import reader as facebook_reader
 from elder_sign.platforms.facebook import session as facebook_session
 from elder_sign.platforms.facebook.parse import REEL_PATH
+from elder_sign.shared import store
 
 PLATFORMS = ("facebook",)
+
+FROZEN_EXIT: Final = 3
+"""The exit status of a canary check that froze Elder Sign on a platform."""
 
 
 def _login(
@@ -267,6 +273,108 @@ def counted_line(
     )
 
 
+def _plural(
+    count: int,
+    one: str,
+    many: str,
+) -> str:
+    """Return a count and the word for that many."""
+
+    return f"{count} {one if count == 1 else many}"
+
+
+def _set_canary(
+    options: argparse.Namespace,
+) -> int:
+    """Keep one of the person's reels, as it reads now, as the canary Facebook is checked by."""
+
+    found = REEL_PATH.search(options.url)
+
+    if found is None:
+        print(f"{options.url} is not a link to a reel.", file=sys.stderr)
+        return 1
+
+    reel_id = found.group(1)
+    post = Post(
+        platform="facebook", post_id=reel_id, url=facebook_reader.REEL_URL.format(reel_id=reel_id)
+    )
+    connection = store.connect()
+
+    try:
+        with facebook_reader.facebook(_settings(options)) as platform:
+            canary = canaries.set_canary(connection, platform, post)
+    except (BrowserError, canaries.CanaryError) as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    finally:
+        connection.close()
+
+    totals = canary.totals()
+    print(
+        f"The canary is reel {reel_id}: {_plural(len(canary.comments), 'comment', 'comments')}, "
+        f"{_plural(totals.get('reply', 0), 'reply', 'replies')}, "
+        f"{_plural(totals.get('mention', 0), 'mention', 'mentions')}, "
+        f"{_plural(totals.get('media', 0), 'GIF, sticker or image', 'GIFs, stickers or images')} "
+        f"({totals.get('still', 0)} fetched)."
+    )
+
+    blind = [
+        canaries.BLIND_SPOTS[spot]
+        for spot in canary.blind_spots()
+        if not (spot == "still" and "media" in canary.blind_spots())
+    ]
+
+    if blind:
+        named = blind[0] if len(blind) == 1 else ", ".join(blind[:-1]) + " or " + blind[-1]
+        print(
+            f"It has no {named}, so a change to how Facebook shows those would go unnoticed. "
+            "A canary with a reply, a mention and a GIF catches the most."
+        )
+
+    return 0
+
+
+def _check_canary(
+    options: argparse.Namespace,
+) -> int:
+    """Read the canary again, and freeze Elder Sign on Facebook if it reads less than it did."""
+
+    connection = store.connect()
+
+    try:
+        was_frozen = canaries.frozen_reason(connection, "facebook") is not None
+
+        with facebook_reader.facebook(_settings(options)) as platform:
+            problems = canaries.check(connection, platform)
+    except (BrowserError, canaries.CanaryError) as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    finally:
+        connection.close()
+
+    if not problems:
+        print("The canary reads as it did: Facebook has not changed what Elder Sign reads.")
+
+        if was_frozen:
+            print("Elder Sign is no longer frozen on facebook.")
+
+        return 0
+
+    print("The canary no longer reads as it did:")
+
+    for problem in problems:
+        print(f"  {problem}")
+
+    print(
+        "Elder Sign is frozen on facebook: it hides, deletes and unhides nothing there "
+        "until a check passes.\n"
+        "If you changed the canary yourself, set it again: "
+        "elder-sign canary set facebook <link to the reel>"
+    )
+
+    return FROZEN_EXIT
+
+
 def scans_path() -> Path:
     """Return where scans are kept: `~/.elder-sign/scans`."""
 
@@ -365,6 +473,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also fetch every GIF, sticker and image, as the stills a model would be shown.",
     )
 
+    canary = commands.add_parser(
+        "canary",
+        help="Check Facebook against a reel of yours, to know when it changed under Elder Sign.",
+    )
+    canary_commands = canary.add_subparsers(dest="canary_command", required=True)
+    setting = canary_commands.add_parser(
+        "set",
+        help="Keep a reel of yours, as it reads now, as the canary.",
+    )
+    setting.add_argument("platform", choices=PLATFORMS)
+    setting.add_argument("url", help="The reel's link: one with a reply, a mention and a GIF.")
+    setting.add_argument("--hidden", action="store_true", help="Keep the browser window hidden.")
+    checking = canary_commands.add_parser(
+        "check",
+        help="Read the canary again; freeze Elder Sign if it reads less (exit status 3).",
+    )
+    checking.add_argument("platform", choices=PLATFORMS)
+    checking.add_argument("--hidden", action="store_true", help="Keep the browser window hidden.")
+
     buttons = commands.add_parser(
         "buttons",
         help="List every button a reel shows, by name, to see how Facebook names them today.",
@@ -402,6 +529,12 @@ def main(
 
     if options.command == "buttons":
         return _buttons(options)
+
+    if options.command == "canary" and options.canary_command == "set":
+        return _set_canary(options)
+
+    if options.command == "canary":
+        return _check_canary(options)
 
     return 2
 
