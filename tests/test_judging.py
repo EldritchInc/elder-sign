@@ -479,6 +479,9 @@ def test_the_judge_command_judges_and_keeps_the_verdicts_privately(
     assert "(0 unreadable, 0 judged again by Opus 5.5)" in printed
     assert "Held 1 comment for the next run" in printed
     assert "Nothing on Facebook was changed." in printed
+    assert "it would delete 0, hide 0 and unhide 0" in printed
+    assert "0 uncertain left for you, 1 too new to act on" in printed
+    assert report["plan"]["waiting"] == ["c2"]
     assert report["held"] == ["c1"]
     assert oct(out.stat().st_mode & 0o777) == "0o600"
 

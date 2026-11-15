@@ -6,11 +6,12 @@ import os
 import sys
 from collections import Counter
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
 from elder_sign import canary as canaries
-from elder_sign import judging, scrub
+from elder_sign import judging, planning, scrub
 from elder_sign.browser import BrowserError, BrowserSettings, profile_path
 from elder_sign.platforms import Post
 from elder_sign.platforms.facebook import capture as facebook_capture
@@ -312,11 +313,26 @@ def _judge(
     output = (
         Path(options.out) if options.out else scans_path() / f"facebook-{reel_id}-verdicts.json"
     )
+    planned = planning.plan(scan, judgment.outcome, now=datetime.now(UTC))
     report = {
         "outcome": judgment.outcome,
         "described": judgment.described,
         "undescribed_media": list(judgment.undescribed),
         "held": list(judgment.held),
+        "plan": {
+            "actions": [
+                {
+                    "comment_id": action.comment_id,
+                    "action": action.action,
+                    "layer": action.layer,
+                    "dry_run": action.dry_run,
+                }
+                for action in planned.actions
+            ],
+            "left": list(planned.left),
+            "waiting": list(planned.waiting),
+            "deferred": list(planned.deferred),
+        },
     }
     write_private(output, json.dumps(report, ensure_ascii=False, indent=2) + "\n")
 
@@ -341,6 +357,13 @@ def _judge(
         missing = _plural(len(judgment.undescribed), "GIF, sticker or image", "pieces of media")
         print(f"Held {held} for the next run: {missing} could not be fetched or described.")
 
+    counted = planned.counts()
+    print(
+        f"If Elder Sign acted, it would delete {counted['delete']}, hide {counted['hide']} "
+        f"and unhide {counted['unhide']} (unhiding in dry run); "
+        f"{counted['left']} uncertain left for you, {counted['waiting']} too new to act on, "
+        f"{counted['deferred']} over this run's caps."
+    )
     print(f"Kept in {output}, readable by you alone. Nothing on Facebook was changed.")
 
     return 0
