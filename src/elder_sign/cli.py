@@ -315,7 +315,7 @@ def _set_canary(
         f"{_plural(totals.get('reply', 0), 'reply', 'replies')}, "
         f"{_plural(totals.get('mention', 0), 'mention', 'mentions')}, "
         f"{_plural(totals.get('media', 0), 'GIF, sticker or image', 'GIFs, stickers or images')} "
-        f"({totals.get('still', 0)} fetched)."
+        f"({totals.get('still', 0)} fetched), {totals.get('hidden', 0)} hidden."
     )
 
     blind = [
@@ -325,10 +325,10 @@ def _set_canary(
     ]
 
     if blind:
-        named = blind[0] if len(blind) == 1 else ", ".join(blind[:-1]) + " or " + blind[-1]
+        named = blind[0] if len(blind) == 1 else ", ".join(blind[:-1]) + ", or " + blind[-1]
         print(
             f"It has no {named}, so a change to how Facebook shows those would go unnoticed. "
-            "A canary with a reply, a mention and a GIF catches the most."
+            "A canary with a reply, a mention, a GIF and a comment you hid catches the most."
         )
 
     return 0

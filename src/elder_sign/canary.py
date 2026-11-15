@@ -4,15 +4,17 @@ Facebook's pages are undocumented and change without notice. When they do,
 Elder Sign may read a reply as a top-level comment, or a GIF as nothing at
 all, and judge a comment without the context that makes it friendly. So a
 platform is checked against a **canary**: one of the person's own reels,
-with comments they know, ideally a reply, a mention and a GIF among them.
+with comments they know, ideally a reply, a mention, a GIF and a comment
+they hid among them.
 
 `set_canary` reads the canary as it is now and keeps, for each of its
 comments, what Elder Sign read of it: its reply to its parent, its mentions,
-its words, its author's name, its time, its media, and each GIF, sticker or
-image fetched. `check` reads it again. A comment no longer read, or read
-without something it had, means the platform changed: Elder Sign is then
-**frozen** on that platform, and acts on nothing there until a check
-passes. New comments on the canary change nothing.
+its words, its author's name, its time, its media, each GIF, sticker or
+image fetched, and whether it is hidden. `check` reads it again. A comment
+no longer read, or read without something it had, means the platform
+changed: Elder Sign is then **frozen** on that platform, and acts on nothing
+there until a check passes; everything that acts asks `ensure_unfrozen`
+first. New comments on the canary change nothing.
 
 Both are kept as flags in the state file: `canary:<platform>` and
 `frozen:<platform>`.
@@ -43,10 +45,11 @@ FEATURES: Final = {
     "time": "times",
     "media": "GIFs, stickers or images",
     "still": "GIFs, stickers and images fetched",
+    "hidden": "hidden comments",
 }
 """What Elder Sign reads of a comment, in the order it is checked, and what each is called."""
 
-CATCHES: Final = ("reply", "mention", "media", "still")
+CATCHES: Final = ("reply", "mention", "media", "still", "hidden")
 """What a canary must have to catch Facebook changing how it is read."""
 
 BLIND_SPOTS: Final = {
@@ -54,12 +57,17 @@ BLIND_SPOTS: Final = {
     "mention": "mention",
     "media": "GIF, sticker or image",
     "still": "GIF, sticker or image that can be fetched",
+    "hidden": "hidden comment",
 }
 """What each feature a canary lacks is called, when it is said to lack it."""
 
 
 class CanaryError(RuntimeError):
     """Raised when a canary cannot be set or checked."""
+
+
+class FrozenError(RuntimeError):
+    """Raised when Elder Sign is asked to act on a platform it is frozen on."""
 
 
 @dataclass(frozen=True)
@@ -149,6 +157,9 @@ def features_of(
 
     read.extend("still" for item in media if platform.fetch_media(item) is not None)
 
+    if comment.get("hidden"):
+        read.append("hidden")
+
     return tuple(read)
 
 
@@ -200,6 +211,25 @@ def frozen_reason(
     flag = read_flag(connection, FROZEN_FLAG.format(platform=platform))
 
     return None if flag is None else (flag.reason or "its canary stopped reading as it did")
+
+
+def ensure_unfrozen(
+    connection: sqlite3.Connection,
+    platform: str,
+) -> None:
+    """Refuse to go on when Elder Sign is frozen on a platform; every action asks this first.
+
+    Raises:
+        FrozenError: Elder Sign is frozen on the platform, saying why and how to unfreeze it.
+    """
+
+    reason = frozen_reason(connection, platform)
+
+    if reason is not None:
+        raise FrozenError(
+            f"Elder Sign is frozen on {platform}, so it acts on nothing there: {reason}\n"
+            f"Once Elder Sign reads {platform} again, run: elder-sign canary check {platform}"
+        )
 
 
 def check(

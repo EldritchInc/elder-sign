@@ -16,7 +16,9 @@ import pytest
 from elder_sign.canary import (
     Canary,
     CanaryError,
+    FrozenError,
     check,
+    ensure_unfrozen,
     frozen_reason,
     read_canary,
     set_canary,
@@ -30,7 +32,7 @@ REEL = "2027199361330354"
 
 
 def canary_comments() -> list[Comment]:
-    """Return a canary's comments: words, a reply, a mention and a GIF."""
+    """Return a canary's comments: words, a reply, a mention, a GIF and a hidden comment."""
 
     return [
         {
@@ -57,6 +59,15 @@ def canary_comments() -> list[Comment]:
             "author_name": "Three",
             "media": [{"kind": "gif", "url": GIF, "provider": "giphy"}],
             "created_at": "2026-11-15T04:32:00Z",
+        },
+        {
+            "id": "c4",
+            "parent_id": None,
+            "author_id": "a4",
+            "author_name": "Four",
+            "text": "Caught by the filter",
+            "created_at": "2026-11-15T04:33:00Z",
+            "hidden": True,
         },
     ]
 
@@ -100,16 +111,18 @@ def test_setting_the_canary_keeps_what_it_reads_as_now(
     assert read_canary(state, "facebook") == canary
     assert canary.post_id == REEL
     assert canary.url == post.url
-    assert set(canary.comments) == {"c1", "c2", "c3"}
+    assert set(canary.comments) == {"c1", "c2", "c3", "c4"}
     assert canary.totals() == {
-        "author": 3,
+        "author": 4,
+        "hidden": 1,
         "media": 1,
         "mention": 1,
         "reply": 1,
         "still": 1,
-        "time": 3,
-        "words": 2,
+        "time": 4,
+        "words": 3,
     }
+    assert canary.blind_spots() == []
 
 
 def test_a_canary_says_what_it_cannot_catch() -> None:
@@ -121,7 +134,7 @@ def test_a_canary_says_what_it_cannot_catch() -> None:
         comment_count=1,
     )
 
-    assert canary.blind_spots() == ["reply", "mention", "media", "still"]
+    assert canary.blind_spots() == ["reply", "mention", "media", "still", "hidden"]
 
 
 def test_a_reel_without_comments_cannot_be_a_canary(
@@ -164,7 +177,7 @@ def test_new_comments_on_the_canary_change_nothing(
 ) -> None:
     platform, post = canary_platform()
     set_canary(state, platform, post)
-    newcomer: Comment = {"id": "c4", "parent_id": None, "author_id": "a4", "text": "new"}
+    newcomer: Comment = {"id": "c5", "parent_id": None, "author_id": "a5", "text": "new"}
     platform.set_comments(REEL, [*canary_comments(), newcomer])
 
     assert check(state, platform) == []
@@ -179,7 +192,7 @@ def test_comments_no_longer_read_freeze_the_platform(
 
     problems = check(state, platform)
 
-    assert problems[0] == "2 of the canary's 3 comments were not read."
+    assert problems[0] == "3 of the canary's 4 comments were not read."
     assert frozen_reason(state, "facebook") == "; ".join(problems)
 
 
@@ -188,9 +201,9 @@ def test_comments_no_longer_read_freeze_the_platform(
     [
         ({"parent_id": None}, "replies: 1 expected, 0 read"),
         ({"mentions": []}, "mentions: 1 expected, 0 read"),
-        ({"text": None}, "words: 2 expected, 1 read"),
-        ({"author_name": None}, "author names: 3 expected, 2 read"),
-        ({"created_at": None}, "times: 3 expected, 2 read"),
+        ({"text": None}, "words: 3 expected, 2 read"),
+        ({"author_name": None}, "author names: 4 expected, 3 read"),
+        ({"created_at": None}, "times: 4 expected, 3 read"),
     ],
 )
 def test_a_comment_read_without_what_it_had_freezes_the_platform(
@@ -200,9 +213,9 @@ def test_a_comment_read_without_what_it_had_freezes_the_platform(
 ) -> None:
     platform, post = canary_platform()
     set_canary(state, platform, post)
-    (first, second, third) = canary_comments()
+    (first, second, third, fourth) = canary_comments()
     changed: Any = {**second, **change}
-    platform.set_comments(REEL, [first, changed, third])
+    platform.set_comments(REEL, [first, changed, third, fourth])
 
     assert check(state, platform) == [f"Comments with {problem}."]
     assert frozen_reason(state, "facebook") is not None
@@ -226,13 +239,25 @@ def test_a_gif_no_longer_read_freezes_the_platform(
 ) -> None:
     platform, post = canary_platform()
     set_canary(state, platform, post)
-    (first, second, third) = canary_comments()
-    platform.set_comments(REEL, [first, second, {**third, "media": []}])
+    (first, second, third, fourth) = canary_comments()
+    platform.set_comments(REEL, [first, second, {**third, "media": []}, fourth])
 
     assert check(state, platform) == [
         "Comments with GIFs, stickers or images: 1 expected, 0 read.",
         "Comments with GIFs, stickers and images fetched: 1 expected, 0 read.",
     ]
+
+
+def test_a_hidden_comment_read_as_visible_freezes_the_platform(
+    state: sqlite3.Connection,
+) -> None:
+    platform, post = canary_platform()
+    set_canary(state, platform, post)
+    (*rest, fourth) = canary_comments()
+    platform.set_comments(REEL, [*rest, {**fourth, "hidden": False}])
+
+    assert check(state, platform) == ["Comments with hidden comments: 1 expected, 0 read."]
+    assert frozen_reason(state, "facebook") is not None
 
 
 def test_a_canary_that_cannot_be_read_at_all_freezes_the_platform(
@@ -282,6 +307,44 @@ def test_a_passing_check_unfreezes_the_platform(
     assert frozen_reason(state, "instagram") is None
     assert check(state, platform) == []
     assert frozen_reason(state, "facebook") is None
+
+
+# Acting only while unfrozen
+
+
+def test_acting_is_allowed_on_a_platform_that_is_not_frozen(
+    state: sqlite3.Connection,
+) -> None:
+    ensure_unfrozen(state, "facebook")
+
+
+def test_acting_is_refused_on_a_frozen_platform_with_the_reason(
+    state: sqlite3.Connection,
+) -> None:
+    platform, post = canary_platform()
+    set_canary(state, platform, post)
+    platform.set_comments(REEL, canary_comments()[:3])
+    check(state, platform)
+
+    with pytest.raises(FrozenError, match="1 of the canary's 4 comments were not read") as raised:
+        ensure_unfrozen(state, "facebook")
+
+    assert "Elder Sign is frozen on facebook" in str(raised.value)
+    assert "elder-sign canary check facebook" in str(raised.value)
+    ensure_unfrozen(state, "instagram")
+
+
+def test_acting_is_allowed_again_once_a_check_passes(
+    state: sqlite3.Connection,
+) -> None:
+    platform, post = canary_platform()
+    set_canary(state, platform, post)
+    platform.set_comments(REEL, [])
+    check(state, platform)
+    platform.set_comments(REEL, canary_comments())
+    check(state, platform)
+
+    ensure_unfrozen(state, "facebook")
 
 
 # The commands
@@ -334,7 +397,7 @@ def test_the_canary_commands_set_check_freeze_and_unfreeze(
     assert main(["canary", "check", "facebook"]) == 0
     passed = capsys.readouterr().out
 
-    platform.set_comments(REEL, canary_comments()[:2])
+    platform.set_comments(REEL, canary_comments()[:3])
     assert main(["canary", "check", "facebook"]) == 3
     failed = capsys.readouterr().out
 
@@ -345,11 +408,13 @@ def test_the_canary_commands_set_check_freeze_and_unfreeze(
     assert main(["canary", "check", "facebook"]) == 0
     recovered = capsys.readouterr().out
 
-    assert f"The canary is reel {REEL}: 3 comments" in set_out
+    assert f"The canary is reel {REEL}: 4 comments" in set_out
     assert "1 reply" in set_out
     assert "1 GIF, sticker or image (1 fetched)" in set_out
+    assert "1 hidden" in set_out
+    assert "It has no" not in set_out
     assert "reads as it did" in passed
-    assert "1 of the canary's 3 comments were not read." in failed
+    assert "1 of the canary's 4 comments were not read." in failed
     assert "Elder Sign is frozen on facebook" in failed
     assert "elder-sign canary set facebook" in failed
     assert "no longer frozen" not in still_failed
@@ -369,7 +434,10 @@ def test_setting_a_canary_says_what_it_cannot_catch(
     stand_in(monkeypatch, platform)
 
     assert main(["canary", "set", "facebook", REEL_LINK]) == 0
-    assert "It has no reply, mention or GIF, sticker or image" in capsys.readouterr().out
+    assert (
+        "It has no reply, mention, GIF, sticker or image, or hidden comment"
+        in capsys.readouterr().out
+    )
 
 
 def test_checking_without_a_canary_says_how_to_set_one(
