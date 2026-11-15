@@ -26,6 +26,13 @@ capture, so everything here but the clicking is proven without Facebook.
   the browser's own session, paced like any other look, from Facebook's CDN
   or the GIF service it came from and nowhere else, and made a still
   Azathoth accepts: a GIF's first frame, as a PNG.
+- **Acting** on a comment finds it by its own permalink, which names it as
+  `comment_id=<n>`, or `reply_comment_id=<n>` for a reply, never by its
+  words. Hide and Unhide are buttons under the comment, beside Reply; a
+  delete is chosen from its "…" menu and confirmed in Facebook's "Delete
+  Comment?" dialog. Where a button is missing, the menu is tried. Comments hidden now are
+  found where "Hidden by You" shows them. A probe opens each menu, reads it,
+  and closes it, clicking nothing.
 - **Notices** Facebook gives of comments it filtered out of view are those
   it gave while all comments were shown. The ones it gives with the reel's
   page, before all are chosen, and with "Hidden by You" describe views the
@@ -34,7 +41,7 @@ capture, so everything here but the clicking is proven without Facebook.
 
 import re
 from collections import Counter
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -45,6 +52,7 @@ from urllib.parse import urlsplit
 from elder_sign.browser import BrowserError, BrowserSettings, Pacer, open_browser
 from elder_sign.media import still_of
 from elder_sign.platforms.base import (
+    ActionResult,
     FetchedMedia,
     MediaItem,
     Post,
@@ -58,6 +66,7 @@ from elder_sign.platforms.facebook.parse import (
     PostDetails,
     comments_in,
     filtering_notices,
+    numeric_id_of,
     post_id_of,
     posts_in,
 )
@@ -142,6 +151,38 @@ class Browser(Protocol):
         url: str,
     ) -> bytes | None:
         """Return what a URL holds, fetched as the signed-in person, or none when it cannot be."""
+
+    def show(
+        self,
+        view: Literal["all", "hidden"],
+        comment_count: int | None = None,
+    ) -> None:
+        """Show the open reel's comments, all of them or those hidden, every fold opened."""
+
+    def act(
+        self,
+        comment_id: str,
+        action: str,
+        *,
+        probe: bool = False,
+    ) -> tuple[str, ...]:
+        """Do one action to one comment shown, and return what its menu offered.
+
+        Raises:
+            ActionError: The comment, its menu, or the menu's item was not found.
+        """
+
+
+class ActionError(RuntimeError):
+    """Raised when an action cannot be done to a comment, saying why and what its menu offered."""
+
+    def __init__(
+        self,
+        reason: str,
+        menu: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__(reason)
+        self.menu = menu
 
 
 def fetchable(
@@ -303,6 +344,42 @@ class FacebookPlatform:
 
         return scan
 
+    def act(
+        self,
+        post: Post,
+        actions: Sequence[tuple[str, str]],
+        hidden: Collection[str],
+        *,
+        probe: bool = False,
+    ) -> list[ActionResult]:
+        """Do each action on the reel, those on hidden comments where hidden comments show."""
+
+        visited = self._browser.visit(post.url)
+        details = self.details_of(post.post_id, visited)
+        count = details.comment_count if details else None
+        results: list[ActionResult] = []
+        views: tuple[tuple[Literal["all", "hidden"], list[tuple[str, str]]], ...] = (
+            ("all", [entry for entry in actions if entry[0] not in hidden]),
+            ("hidden", [entry for entry in actions if entry[0] in hidden]),
+        )
+
+        for view, wanted in views:
+            if not wanted:
+                continue
+
+            self._browser.show(view, count)
+
+            for comment_id, action in wanted:
+                try:
+                    menu = self._browser.act(comment_id, action, probe=probe)
+                except ActionError as exc:
+                    results.append(ActionResult(comment_id, action, False, str(exc), exc.menu))
+                    continue
+
+                results.append(ActionResult(comment_id, action, True, None, menu))
+
+        return results
+
     def fetch_media(
         self,
         item: MediaItem,
@@ -376,6 +453,32 @@ HIDDEN_BY_YOU: Final = re.compile(r"^Hidden by You\b", re.IGNORECASE)
 
 ALL_COMMENTS: Final = re.compile(r"^All comments\b", re.IGNORECASE)
 """The choice that shows every comment, rather than only those Facebook ranks highest."""
+
+COMMENT_MENU: Final = re.compile(
+    r"^(?:Edit or delete this|Hide or report this|Remove or report this|"
+    r"Edit, delete or hide this|More options(?: for this comment)?|Actions for this comment)$",
+    re.IGNORECASE,
+)
+"""The name of the "…" button that opens one comment's menu."""
+
+MENU_ITEMS: Final = {
+    "delete": re.compile(r"^Delete(?: comment)?$", re.IGNORECASE),
+    "hide": re.compile(r"^Hide comment$", re.IGNORECASE),
+    "unhide": re.compile(r"^Unhide(?: comment)?$", re.IGNORECASE),
+}
+"""The item of a comment's menu that does each action."""
+
+DIRECT: Final = {
+    "hide": re.compile(r"^Hide$", re.IGNORECASE),
+    "unhide": re.compile(r"^Unhide$", re.IGNORECASE),
+}
+"""The buttons under a comment, beside Reply, that hide and unhide it."""
+
+CONFIRM_DELETE: Final = re.compile(r"^Delete$", re.IGNORECASE)
+"""The button that confirms a delete, when Facebook asks."""
+
+CONFIRM_MILLISECONDS: Final = 3000
+"""How long a delete's confirmation is waited for before it is taken that none was asked."""
 
 
 class PlaywrightBrowser:
@@ -619,6 +722,154 @@ class PlaywrightBrowser:
             shown=sent_in("shown"),
             hidden=sent_in("hidden"),
         )
+
+    def show(
+        self,
+        view: Literal["all", "hidden"],
+        comment_count: int | None = None,
+    ) -> None:
+        """Show the open reel's comments, all or those hidden, every fold opened."""
+
+        self.open_comments(comment_count)
+        self._choose(ALL_COMMENTS if view == "all" else HIDDEN_BY_YOU, "shown")
+        self._open_folds()
+
+    def _comment(
+        self,
+        comment_id: str,
+    ) -> "Locator | None":
+        """Return a comment shown on the page, found by its own permalink, or none."""
+
+        number = numeric_id_of(comment_id)
+
+        if number is None:
+            return None
+
+        own = (
+            f"a[href*='reply_comment_id={number}&'], a[href$='reply_comment_id={number}']",
+            f"a[href*='comment_id={number}&']:not([href*='reply_comment_id']), "
+            f"a[href$='comment_id={number}']:not([href*='reply_comment_id'])",
+        )
+
+        for selector in own:
+            found = self._page.locator("[role=article]").filter(has=self._page.locator(selector))
+
+            if found.count():
+                return found.last
+
+        return None
+
+    @staticmethod
+    def _first_visible(
+        within: "Locator",
+        name: re.Pattern[str],
+    ) -> "Locator | None":
+        """Return the first visible button with a name, in a part of the page, if any."""
+
+        found = within.get_by_role("button", name=name)
+
+        for index in range(found.count()):
+            if found.nth(index).is_visible():
+                return found.nth(index)
+
+        return None
+
+    def _menu_items(self) -> list[tuple[str, "Locator"]]:
+        """Return each visible item of the open menu, by name."""
+
+        found = self._page.get_by_role("menuitem")
+        items = []
+
+        for index in range(found.count()):
+            item = found.nth(index)
+
+            if item.is_visible():
+                items.append((" ".join(item.inner_text().split()), item))
+
+        return items
+
+    def act(
+        self,
+        comment_id: str,
+        action: str,
+        *,
+        probe: bool = False,
+    ) -> tuple[str, ...]:
+        """Do one action to one comment shown, paced, and return what its menu offered.
+
+        With `probe`, the menu is opened, read and closed, and nothing in it
+        is clicked.
+
+        Raises:
+            ActionError: The comment, its menu, or the menu's item was not found.
+        """
+
+        article = self._comment(comment_id)
+
+        if article is None:
+            raise ActionError("the comment is not on the page")
+
+        article.scroll_into_view_if_needed()
+        article.hover()
+        self._pacer.pause(0.3)
+        direct = DIRECT.get(action)
+        shortcut = None if direct is None else self._first_visible(article, direct)
+
+        if shortcut is not None and not probe:
+            shortcut.click()
+            self._settle()
+            self._pacer.pause(0.6)
+
+            return (f"[button] {' '.join(shortcut.inner_text().split())}",)
+
+        buttons = article.get_by_role("button", name=COMMENT_MENU)
+        button = next(
+            (buttons.nth(i) for i in range(buttons.count()) if buttons.nth(i).is_visible()), None
+        )
+
+        if button is None:
+            if probe and shortcut is not None:
+                return (f"[button] {' '.join(shortcut.inner_text().split())}",)
+
+            raise ActionError("the comment's menu button was not found")
+
+        button.click()
+        self._pacer.pause(0.4)
+        items = self._menu_items()
+        menu = tuple(name for name, _ in items)
+
+        if shortcut is not None:
+            menu = (f"[button] {' '.join(shortcut.inner_text().split())}", *menu)
+        wanted = MENU_ITEMS.get(action)
+        item = next((found for name, found in items if wanted and wanted.match(name)), None)
+
+        if probe or item is None:
+            self._page.keyboard.press("Escape")
+
+            if probe and item is None and shortcut is None:
+                raise ActionError(f"nothing on the comment would {action} it", menu)
+
+            if item is None and not probe:
+                raise ActionError(f"the comment's menu had no item to {action} it", menu)
+
+            return menu
+
+        item.click()
+        self._pacer.pause(0.4)
+
+        if action == "delete":
+            confirm = self._page.get_by_role("dialog").get_by_role("button", name=CONFIRM_DELETE)
+
+            with suppress(Exception):
+                confirm.first.wait_for(state="visible", timeout=CONFIRM_MILLISECONDS)
+
+            if confirm.count() and confirm.first.is_visible():
+                confirm.first.click()
+
+        self._settle()
+        self._pacer.pause(0.6)
+
+        return menu
 
     def button_names(self) -> list[str]:
         """Return the name of every visible button on the open page, as a screen reader hears it.

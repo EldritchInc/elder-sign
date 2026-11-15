@@ -419,6 +419,60 @@ def _review(
     return 0
 
 
+def _probe(
+    options: argparse.Namespace,
+) -> int:
+    """Find every comment the last plan for a reel would act on, read its menu, click nothing."""
+
+    found = REEL_PATH.search(options.url)
+
+    if found is None:
+        print(f"{options.url} is not a link to a reel.", file=sys.stderr)
+        return 1
+
+    reel_id = found.group(1)
+    path = scans_path() / f"facebook-{reel_id}-verdicts.json"
+    report = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+    if "scan" not in report:
+        print(
+            f"Reel {reel_id} has no plan yet; run: elder-sign judge facebook {options.url}",
+            file=sys.stderr,
+        )
+        return 1
+
+    actions = [
+        (str(action["comment_id"]), str(action["action"])) for action in report["plan"]["actions"]
+    ]
+    hidden = {comment["id"] for comment in report["scan"]["comments"] if comment.get("hidden")}
+    names = {comment["id"]: comment.get("author_name") for comment in report["scan"]["comments"]}
+    post = Post(
+        platform="facebook", post_id=reel_id, url=facebook_reader.REEL_URL.format(reel_id=reel_id)
+    )
+
+    try:
+        with facebook_reader.facebook(_settings(options)) as platform:
+            results = platform.act(post, actions, hidden, probe=True)
+    except BrowserError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+    for result in results:
+        mark = "found  " if result.ok else "MISSING"
+        offered = " / ".join(result.menu) if result.menu else "-"
+        print(
+            f"{mark} {result.action:<7} {names.get(result.comment_id) or '?':<24} "
+            f"offers: {offered}" + (f"  ({result.detail})" if result.detail else "")
+        )
+
+    found_count = sum(1 for result in results if result.ok)
+    print(
+        f"Found {found_count} of {len(results)} comments and read their menus; nothing was clicked."
+    )
+
+    return 0 if found_count == len(results) else 1
+
+
 def _log(
     options: argparse.Namespace,
 ) -> int:
@@ -709,6 +763,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     reviewing_command.add_argument("--report", help="The verdicts judge kept, if not the default.")
 
+    probing = commands.add_parser(
+        "probe",
+        help="Find each comment the last plan would act on and read its menu, clicking nothing.",
+    )
+    probing.add_argument("platform", choices=PLATFORMS)
+    probing.add_argument("url", help="The reel's link.")
+    probing.add_argument("--hidden", action="store_true", help="Keep the browser window hidden.")
+
     logging = commands.add_parser(
         "log",
         help="Show what Elder Sign planned and did in your name, newest first.",
@@ -792,6 +854,9 @@ def main(
 
     if options.command == "judge":
         return _judge(options)
+
+    if options.command == "probe":
+        return _probe(options)
 
     if options.command == "log":
         return _log(options)

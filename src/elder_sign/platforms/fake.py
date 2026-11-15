@@ -6,10 +6,11 @@ scanned, or a known GIF never fetched.
 """
 
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 
 from elder_sign.platforms.base import (
+    ActionResult,
     Comment,
     FetchedMedia,
     MediaItem,
@@ -19,6 +20,9 @@ from elder_sign.platforms.base import (
     validate_scan,
 )
 from elder_sign.shared.store import Fingerprint
+
+FAKE_MENU: tuple[str, ...] = ("Delete", "Hide comment", "Report comment")
+"""What the fake's comment menu offers."""
 
 
 class FakePlatform:
@@ -123,6 +127,38 @@ class FakePlatform:
         self.calls["fetch_media"] += 1
 
         return self._media.get(str(item.get("url") or ""))
+
+    def act(
+        self,
+        post: Post,
+        actions: Sequence[tuple[str, str]],
+        hidden: Collection[str],
+        *,
+        probe: bool = False,
+    ) -> list[ActionResult]:
+        """Delete, hide or unhide the post's comments, as told, unless probing."""
+
+        self.calls["act"] += 1
+        comments = self._comments[post.post_id]
+        results = []
+
+        for comment_id, action in actions:
+            index = next((i for i, c in enumerate(comments) if c["id"] == comment_id), None)
+
+            if index is None:
+                missing = ActionResult(comment_id, action, False, "the comment is not on the page")
+                results.append(missing)
+                continue
+
+            if not probe:
+                if action == "delete":
+                    comments.pop(index)
+                else:
+                    comments[index] = {**comments[index], "hidden": action == "hide"}
+
+            results.append(ActionResult(comment_id, action, True, None, FAKE_MENU))
+
+        return results
 
     def _scan(
         self,

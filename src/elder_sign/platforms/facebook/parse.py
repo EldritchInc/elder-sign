@@ -308,6 +308,22 @@ def post_id_of(
     return post_id if kind == "comment" and underscore and post_id.isdigit() else None
 
 
+def numeric_id_of(
+    comment_id: str,
+) -> str | None:
+    """Return a comment's own number, as its permalink names it: `comment:<post>_<comment>`."""
+
+    try:
+        decoded = base64.b64decode(comment_id, validate=True).decode("ascii")
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return None
+
+    kind, _, rest = decoded.partition(":")
+    _, underscore, number = rest.partition("_")
+
+    return number if kind == "comment" and underscore and number.isdigit() else None
+
+
 @dataclass(frozen=True)
 class PostDetails:
     """What Facebook says of one post: its reel, when it was published, how many comments it has."""

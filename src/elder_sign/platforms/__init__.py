@@ -2,6 +2,7 @@
 
 from elder_sign.platforms.base import (
     ACCEPTED_MEDIA_TYPES,
+    ActionResult,
     Comment,
     FetchedMedia,
     MediaItem,
@@ -9,6 +10,7 @@ from elder_sign.platforms.base import (
     Post,
     Scan,
     ScanError,
+    confirm,
     fingerprint_of,
     validate_scan,
 )
@@ -16,6 +18,7 @@ from elder_sign.platforms.fake import FakePlatform
 
 __all__ = [
     "ACCEPTED_MEDIA_TYPES",
+    "ActionResult",
     "Comment",
     "FakePlatform",
     "FetchedMedia",
@@ -24,6 +27,7 @@ __all__ = [
     "Post",
     "Scan",
     "ScanError",
+    "confirm",
     "fingerprint_of",
     "validate_scan",
 ]

@@ -281,6 +281,56 @@ def test_the_review_command_reviews_the_reels_last_report(
     assert "Marked 2 friendly and 0 hostile" in capsys.readouterr().out
 
 
+def test_a_report_from_before_review_asks_for_judging_again(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from elder_sign.cli import main
+
+    older = tmp_path / "older.json"
+    older.write_text(json.dumps({key: value for key, value in report().items() if key != "scan"}))
+    arguments = ["review", "facebook", "https://www.facebook.com/reel/1", "--report", str(older)]
+
+    assert main(arguments) == 1
+    assert "elder-sign judge facebook" in capsys.readouterr().err
+
+
+def test_the_probe_command_finds_each_planned_comment_and_clicks_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from contextlib import contextmanager
+
+    import elder_sign.cli as command
+    import elder_sign.platforms.facebook.reader as reader
+    from elder_sign.platforms import FakePlatform
+
+    platform = FakePlatform()
+    post = platform.add_post("1", [report()["scan"]["comments"][0]])
+    kept = report()
+    kept["scan"]["post_id"] = "1"
+
+    @contextmanager
+    def facebook(settings: Any = None, pacer: Any = None, **options: Any) -> Iterator[Any]:
+        yield platform
+
+    monkeypatch.setattr(reader, "facebook", facebook)
+    monkeypatch.setattr(command, "scans_path", lambda: tmp_path)
+    (tmp_path / "facebook-1-verdicts.json").write_text(json.dumps(kept))
+
+    status = command.main(["probe", "facebook", "https://www.facebook.com/reel/1"])
+    printed = capsys.readouterr().out
+
+    assert status == 1
+    assert "found   delete  Jeffy Jeff" in printed
+    assert "offers: Delete / Hide comment / Report comment" in printed
+    assert "MISSING hide    Wendy" in printed
+    assert "Found 1 of 2 comments and read their menus; nothing was clicked." in printed
+    assert [c["id"] for c in platform.scan(post)["comments"]] == ["c1"]
+    assert platform.calls["act"] == 1
+
+
 def test_the_review_command_needs_a_judged_reel(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

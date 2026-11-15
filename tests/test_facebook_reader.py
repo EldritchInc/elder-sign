@@ -30,6 +30,7 @@ from elder_sign.platforms.facebook.reader import (
     REEL_URL,
     REELS_TAB,
     SORTING,
+    ActionError,
     Expansion,
     FacebookPlatform,
     PlaywrightBrowser,
@@ -65,6 +66,9 @@ class ReplayingBrowser:
         self._expanded = expanded or Expansion()
         self._downloads = downloads or {}
         self.downloaded: list[str] = []
+        self.shown: list[str] = []
+        self.acted: list[tuple[str, str, bool]] = []
+        self.missing: set[str] = set()
         self.visited: list[str] = []
         self.expansions = 0
         self.counts: list[int | None] = []
@@ -86,6 +90,17 @@ class ReplayingBrowser:
     def download(self, url: str) -> bytes | None:
         self.downloaded.append(url)
         return self._downloads.get(url)
+
+    def show(self, view: str, comment_count: int | None = None) -> None:
+        self.shown.append(view)
+
+    def act(self, comment_id: str, action: str, *, probe: bool = False) -> tuple[str, ...]:
+        self.acted.append((comment_id, action, probe))
+
+        if comment_id in self.missing:
+            raise ActionError("the comment is not on the page")
+
+        return ("Delete", "Hide comment", "Report comment")
 
 
 def gif() -> bytes:
@@ -345,6 +360,45 @@ def test_a_scan_reads_comments_from_every_part_of_its_expansion() -> None:
     scan = platform_on(browser).scan(Post("facebook", reel, REEL_URL.format(reel_id=reel)))
 
     assert len(scan["comments"]) == len(comments_in(canary()))
+
+
+# Acting
+
+
+def test_acting_shows_all_comments_then_the_hidden_and_reports_each_action() -> None:
+    reel = canary_reel()
+    browser = ReplayingBrowser({REEL_URL.format(reel_id=reel): canary()}, [])
+    browser.missing = {"gone"}
+    post = Post("facebook", reel, REEL_URL.format(reel_id=reel))
+
+    results = platform_on(browser).act(
+        post, [("c1", "delete"), ("h1", "unhide"), ("gone", "hide")], {"h1"}
+    )
+
+    assert browser.shown == ["all", "hidden"]
+    assert browser.acted == [
+        ("c1", "delete", False),
+        ("gone", "hide", False),
+        ("h1", "unhide", False),
+    ]
+    assert [(result.comment_id, result.ok) for result in results] == [
+        ("c1", True),
+        ("gone", False),
+        ("h1", True),
+    ]
+    assert results[1].detail == "the comment is not on the page"
+
+
+def test_a_probe_is_passed_through_and_a_view_with_nothing_to_do_is_not_shown() -> None:
+    reel = canary_reel()
+    browser = ReplayingBrowser({REEL_URL.format(reel_id=reel): canary()}, [])
+
+    platform_on(browser).act(
+        Post("facebook", reel, REEL_URL.format(reel_id=reel)), [("c1", "hide")], set(), probe=True
+    )
+
+    assert browser.shown == ["all"]
+    assert browser.acted == [("c1", "hide", True)]
 
 
 # Media

@@ -11,7 +11,7 @@ the very schema `normalize_comments` declares, so a platform that changes
 what it returns fails where it is read, not three steps later.
 """
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, NotRequired, Protocol, TypedDict, runtime_checkable
@@ -79,6 +79,17 @@ class Post:
 
 
 @dataclass(frozen=True)
+class ActionResult:
+    """How one action on one comment went, and what its menu offered."""
+
+    comment_id: str
+    action: str
+    ok: bool
+    detail: str | None = None
+    menu: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class FetchedMedia:
     """The bytes of one GIF frame or image, in a type Azathoth accepts as an input."""
 
@@ -134,6 +145,21 @@ class Platform(Protocol):
     ) -> FetchedMedia | None:
         """Return one GIF's first frame or one image, or none when it cannot be fetched."""
 
+    def act(
+        self,
+        post: Post,
+        actions: Sequence[tuple[str, str]],
+        hidden: Collection[str],
+        *,
+        probe: bool = False,
+    ) -> list[ActionResult]:
+        """Delete, hide or unhide comments on a post, each `(comment_id, action)`, in order.
+
+        `hidden` names the comments hidden now, which are found where hidden
+        comments are shown. With `probe`, each comment is found and its menu
+        read, and nothing is done to it.
+        """
+
 
 def validate_scan(
     scan: Any,
@@ -183,3 +209,37 @@ def fingerprint_of(
     )[1]
 
     return Fingerprint(comment_count=len(comments), newest_comment_id=newest["id"])
+
+
+def confirm(
+    actions: Sequence[tuple[str, str]],
+    rescan: Scan,
+) -> dict[str, tuple[bool, str | None]]:
+    """Return, by comment, whether each action took, read from a scan made after them all.
+
+    A delete took when the comment is gone; a hide when the comment is there
+    and hidden; an unhide when it is there and not hidden.
+    """
+
+    found = {comment["id"]: comment for comment in rescan["comments"]}
+    confirmed: dict[str, tuple[bool, str | None]] = {}
+
+    for comment_id, action in actions:
+        comment = found.get(comment_id)
+
+        if action == "delete":
+            confirmed[comment_id] = (
+                (True, None) if comment is None else (False, "it is still there after deleting")
+            )
+        elif comment is None:
+            confirmed[comment_id] = (False, f"it is gone after trying to {action} it")
+        elif action == "hide":
+            confirmed[comment_id] = (
+                (True, None) if comment.get("hidden") else (False, "it is not hidden after hiding")
+            )
+        else:
+            confirmed[comment_id] = (
+                (True, None) if not comment.get("hidden") else (False, "it is still hidden")
+            )
+
+    return confirmed

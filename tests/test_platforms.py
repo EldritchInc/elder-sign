@@ -6,10 +6,12 @@ from typing import Any
 import pytest
 
 from elder_sign.platforms import (
+    ActionResult,
     Comment,
     FakePlatform,
     Platform,
     ScanError,
+    confirm,
     fingerprint_of,
     validate_scan,
 )
@@ -189,6 +191,67 @@ def test_the_fake_counts_every_call() -> None:
 
     assert platform.calls == {"recent_posts": 1, "fingerprint": 2, "fetch_media": 1}
     assert platform.calls["scan"] == 0
+
+
+def test_the_fake_deletes_hides_and_unhides_as_told_and_a_probe_changes_nothing() -> None:
+    platform = FakePlatform(now=NOW)
+    post = platform.add_post(
+        "reel-1",
+        [
+            comment("c1", None),
+            comment("c2", None),
+            {**comment("c3", None), "hidden": True},
+        ],
+    )
+    actions = [("c1", "delete"), ("c2", "hide"), ("c3", "unhide"), ("c9", "hide")]
+
+    probed = platform.act(post, actions, {"c3"}, probe=True)
+    unchanged = platform.scan(post)
+    done = platform.act(post, actions, {"c3"})
+    after = platform.scan(post)
+
+    assert [result.ok for result in probed] == [True, True, True, False]
+    assert len(unchanged["comments"]) == 3
+    assert done[3] == ActionResult("c9", "hide", False, "the comment is not on the page")
+    assert [(c["id"], c.get("hidden")) for c in after["comments"]] == [
+        ("c2", True),
+        ("c3", False),
+    ]
+
+
+def test_what_took_is_confirmed_from_a_scan_made_after() -> None:
+    rescan = validate_scan(
+        {
+            "platform": "facebook",
+            "post_id": "reel-1",
+            "comments": [
+                {**comment("still", None), "hidden": False},
+                {**comment("hidden", None), "hidden": True},
+                {**comment("shown", None), "hidden": False},
+                {**comment("stuck", None), "hidden": True},
+            ],
+        }
+    )
+
+    assert confirm(
+        [
+            ("gone", "delete"),
+            ("still", "delete"),
+            ("hidden", "hide"),
+            ("shown", "hide"),
+            ("shown", "unhide"),
+            ("stuck", "unhide"),
+            ("vanished", "hide"),
+        ],
+        rescan,
+    ) == {
+        "gone": (True, None),
+        "still": (False, "it is still there after deleting"),
+        "hidden": (True, None),
+        "shown": (True, None),
+        "stuck": (False, "it is still hidden"),
+        "vanished": (False, "it is gone after trying to hide it"),
+    }
 
 
 def test_the_fake_serves_only_the_media_it_was_given() -> None:

@@ -22,6 +22,7 @@ from elder_sign.platforms.facebook.parse import (
     filtering_notices,
     media_of,
     mentions_of,
+    numeric_id_of,
     post_id_of,
     posts_in,
     unwrapped,
@@ -262,6 +263,13 @@ def test_a_post_is_named_by_its_comments_ids() -> None:
     assert post_id_of(encode("comment:51414897876204490_7258463746082190")) == "51414897876204490"
     assert post_id_of(encode("feedback:51414897876204490")) is None
     assert post_id_of("not base64!") is None
+
+
+def test_a_comments_own_number_is_read_from_its_id() -> None:
+    assert numeric_id_of(encode("comment:51414897876204490_7258463746082190")) == "7258463746082190"
+    assert numeric_id_of(encode("feedback:51414897876204490")) is None
+    assert numeric_id_of(encode("comment:51414897876204490_")) is None
+    assert numeric_id_of("not base64!") is None
 
 
 def test_counts_are_read_from_any_post_that_holds_one() -> None:
