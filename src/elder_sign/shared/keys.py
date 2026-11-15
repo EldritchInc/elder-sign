@@ -291,3 +291,40 @@ def context_key(
         return None
 
     return f"x:{_digest(content, parent_content)}"
+
+
+PREFIX_WILDCARD: Final = "*"
+"""A blocked term ending in `*` matches any word its last word begins: `trann*`."""
+
+
+def term_matches(
+    normalized: str,
+    term: str,
+) -> bool:
+    """Return whether a blocked term appears in normalized text, as whole words.
+
+    The term is normalized as the text was, so a term written `Tr4nny` blocks
+    every disguise of it. A term matches only whole words, so blocking one
+    word never blocks a longer word that happens to contain it, unless the
+    term ends in `*`.
+    """
+
+    prefix = term.rstrip().endswith(PREFIX_WILDCARD)
+    wanted = normalize_text(term.rstrip().rstrip(PREFIX_WILDCARD)).split()
+    words = normalized.split()
+
+    if not wanted:
+        return False
+
+    for start in range(len(words) - len(wanted) + 1):
+        window = words[start : start + len(wanted)]
+
+        if window[:-1] != wanted[:-1]:
+            continue
+
+        last, expected = window[-1], wanted[-1]
+
+        if last == expected or (prefix and last.startswith(expected)):
+            return True
+
+    return False

@@ -7,6 +7,7 @@ from elder_sign.shared.keys import (
     context_key,
     media_key,
     normalize_text,
+    term_matches,
     text_key,
 )
 
@@ -178,3 +179,27 @@ def test_a_reply_to_an_unknown_parent_or_without_content_has_no_context() -> Non
     assert context_key("c:x", None, top_level=False) is None
     assert context_key(None, "c:y", top_level=False) is None
     assert context_key(None, None, top_level=True) is None
+
+
+# Blocked terms
+
+
+@pytest.mark.parametrize(
+    ("text", "term", "matches"),
+    [
+        ("lol tranny", "TR4NNY", True),
+        ("trannies", "tranny", False),
+        ("trannies", "trann*", True),
+        ("the groomer agenda", "groomer agenda", True),
+        ("agenda groomer", "groomer agenda", False),
+        ("groomer agendas", "groomer agenda*", True),
+        ("anything", "   ", False),
+        ("anything", "*", False),
+    ],
+)
+def test_a_term_matches_whole_normalized_words(
+    text: str,
+    term: str,
+    matches: bool,
+) -> None:
+    assert term_matches(normalize_text(text), term) is matches
