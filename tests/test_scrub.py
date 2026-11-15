@@ -173,9 +173,10 @@ def capture_records() -> list[dict[str, Any]]:
     """Return a small capture, as a capture writes one."""
 
     page = (
-        '<script type="application/json">{"comment": {"id": "5551234567", '
-        '"author": {"name": "Kim Troll", "id": "1000987654321"}, '
+        '<script type="application/json">{"comment": {"__typename": "Comment", '
+        '"id": "5551234567", "author": {"name": "Kim Troll", "id": "1000987654321"}, '
         '"body": {"text": "you will never be a woman"}}}</script>'
+        '<script type="application/json">{"comment_composer": {"theme": "dark"}}</script>'
     )
     body = json.dumps(
         {
@@ -192,6 +193,15 @@ def capture_records() -> list[dict[str, Any]]:
     )
 
     return [
+        {
+            "kind": "graphql",
+            "url": "https://www.facebook.com/api/graphql/",
+            "status": 200,
+            "friendly_name": "OhaiWebPublicKeyConfigQuery",
+            "doc_id": "13579",
+            "variables": {},
+            "body": json.dumps({"data": {"key": "abc"}}),
+        },
         {
             "kind": "document",
             "url": "https://www.facebook.com/reel/1234567890123",
@@ -244,12 +254,105 @@ def test_a_scrub_that_leaks_writes_nothing() -> None:
     assert leaks(scrubber, "... Kim Troll ...") == ["Kim Troll"]
 
     class Leaky(Scrubber):
-        def record(self, record: dict[str, Any]) -> dict[str, Any]:
+        def record(
+            self, record: dict[str, Any], payloads: list[Any] | None = None
+        ) -> dict[str, Any]:
             self.masked.add("Kim Troll")
-            return {"name": "Kim Troll"}
+            return {"url": "", "variables": None, "payloads": [{"name": "Kim Troll"}]}
 
     with pytest.raises(LeakError, match="nothing was written"):
         list(scrub(capture_records(), Leaky(KEY)))
+
+
+def test_only_what_is_about_comments_is_kept_unless_everything_is_asked_for() -> None:
+    kept = [json.loads(line) for line in scrub(capture_records(), Scrubber(KEY))]
+    everything = [
+        json.loads(line) for line in scrub(capture_records(), Scrubber(KEY), everything=True)
+    ]
+
+    assert [record["friendly_name"] for record in kept] == [None, "CommentListComponentsRootQuery"]
+    assert len(kept[0]["payloads"]) == 1
+    assert [record["friendly_name"] for record in everything][0] == "OhaiWebPublicKeyConfigQuery"
+    assert len(everything[1]["payloads"]) == 2
+
+
+def test_a_posts_comment_count_is_about_comments() -> None:
+    record = {
+        "kind": "graphql",
+        "url": "https://www.facebook.com/api/graphql/",
+        "body": json.dumps({"data": {"feedback": {"total_comment_count": 5}}}),
+    }
+
+    (line,) = scrub([record], Scrubber(KEY))
+
+    assert json.loads(line)["payloads"] == [{"data": {"feedback": {"total_comment_count": 5}}}]
+
+
+# Addresses and numbers
+
+
+@pytest.mark.parametrize("key", ["uri_token", "vanity", "profile_url", "handle", "slug"])
+def test_every_word_of_an_address_is_replaced_because_it_is_made_of_a_name(
+    key: str,
+) -> None:
+    result = Scrubber(KEY).string("Eris.Discordia.M", key)
+
+    assert "Eris" not in result and "Discordia" not in result
+    assert result.count(".") == 2
+
+
+def test_a_profile_link_with_a_dotted_name_loses_both_names() -> None:
+    result = Scrubber(KEY).string("https://www.facebook.com/Kim.Troll", "link_url")
+
+    assert result.startswith("https://www.facebook.com/")
+    assert "Kim" not in result and "Troll" not in result
+
+
+def test_a_number_under_an_ids_key_is_replaced_like_an_id() -> None:
+    scrubber = Scrubber(KEY)
+    result = scrubbed(
+        {"userId": 782080741, "actor_id": 1000987654321, "count": 782080741, "id": 7},
+        scrubber,
+    )
+
+    assert result["userId"] == int(scrubber.token("782080741")) != 782080741
+    assert result["actor_id"] != 1000987654321
+    assert result["count"] == 782080741
+    assert result["id"] == 7
+
+
+# What is searched for
+
+
+def test_a_word_kept_as_a_key_or_a_code_name_has_leaked_nothing() -> None:
+    scrubber = Scrubber(KEY)
+    records = [
+        {
+            "url": "",
+            "variables": None,
+            "payloads": [
+                {
+                    "Kim Troll": 1,
+                    "preloader": "adp_CometLogoutHandlerQueryRelayPreloader_5re32",
+                }
+            ],
+        }
+    ]
+    scrubber.masked.update({"Kim Troll", "CometLogoutHandlerQuery"})
+
+    assert leaks(scrubber, records) == []
+
+
+def test_an_id_is_searched_for_as_a_whole_token() -> None:
+    scrubber = Scrubber(KEY)
+    scrubber.replaced.add("318394")
+    records = [{"url": "", "variables": None, "payloads": ["31839469152681680"]}]
+
+    assert leaks(scrubber, records) == []
+
+    records[0]["payloads"] = ["x_318394_y"]
+
+    assert leaks(scrubber, records) == ["318394"]
 
 
 # The command

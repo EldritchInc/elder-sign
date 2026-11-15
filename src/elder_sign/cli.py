@@ -85,7 +85,7 @@ def _scrub(
     ]
 
     try:
-        lines = list(scrub.scrub(records))
+        lines = list(scrub.scrub(records, everything=options.everything))
     except scrub.LeakError as exc:
         print(exc, file=sys.stderr)
         return 1
@@ -125,6 +125,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scrubbing.add_argument("capture", help="The capture to scrub.")
     scrubbing.add_argument("--out", help="Where to write the scrubbed capture.")
+    scrubbing.add_argument(
+        "--everything",
+        action="store_true",
+        help="Keep every response, not only those about comments.",
+    )
 
     return parser
 

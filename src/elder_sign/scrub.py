@@ -17,7 +17,9 @@ Scrubbing keeps exactly that:
   replaced inside, and encoded again, so they match the bare ID elsewhere.
 - **URLs** keep their scheme, host and file extension, and well-known path
   words, such as `media` on Giphy; every other path segment and every query
-  value is replaced as a token.
+  value is replaced as a token. So is every word of a value under a key that
+  addresses someone, such as `uri_token`, `vanity` or `profile_url`, because
+  a chosen address is made of a name.
 - **Structure** is kept as it is: keys, numbers, booleans, and words that are
   not under a key that holds words and have no digit in them, such as
   enums, and every value under a key Facebook marks as its own with `__`,
@@ -66,6 +68,37 @@ TEXT_KEYS: Final = frozenset(
 )
 """Keys whose string values are words a person wrote or is called by."""
 
+PERSON_KEYS: Final = frozenset(
+    {"alternate_name", "first_name", "last_name", "nickname", "short_name", "username", "vanity"}
+)
+"""Keys whose values are part of a person's name even when they are one word."""
+
+FILE_EXTENSIONS: Final = frozenset(
+    {
+        "avif",
+        "gif",
+        "heic",
+        "html",
+        "jpeg",
+        "jpg",
+        "js",
+        "json",
+        "mp4",
+        "php",
+        "png",
+        "webm",
+        "webp",
+    }
+)
+"""File extensions a URL keeps; anything else after a dot, as in `Kim.Troll`, is a word."""
+
+ADDRESS_KEY_ENDINGS: Final = ("handle", "path", "slug", "token", "uri", "url")
+"""Endings of keys whose values address someone, such as `uri_token`: `Eris.Discordia.M`.
+
+Every word of such a value is replaced, not only those with digits, because
+a person's chosen address is made of their name.
+"""
+
 URL_WORDS: Final = frozenset(
     {
         "api",
@@ -107,6 +140,33 @@ GUARD: Final = "for (;;);"
 
 LEAK_LENGTH: Final = 6
 """The shortest masked word or replaced ID searched for before a scrub is written."""
+
+
+ID_DIGITS: Final = 6
+"""The fewest digits a number under an ID's key has to be replaced like one."""
+
+IDENTIFIER: Final = re.compile(r"^[A-Za-z]*(?:[A-Z][a-z0-9]+){3,}[A-Za-z0-9]*$")
+"""A code name made of three or more capitalized words, such as `CometLogoutHandlerQuery`.
+
+Facebook names its queries and components under `name` keys too. Such a name
+is masked like any word there, but is no one's name or words, so a scrub that
+keeps it elsewhere, inside a kept code name, has leaked nothing.
+"""
+
+
+def holds_an_id(
+    key: str | None,
+) -> bool:
+    """Return whether a key's value is an ID: `id`, `userId`, `actor_id`, `fbid`, `ownerID`."""
+
+    if key is None:
+        return False
+
+    return key.lower() in ("id", "fbid") or key.endswith(("Id", "ID", "_id", "_fbid"))
+
+
+COMMENT_MARKERS: Final = ('"__typename": "Comment"', '"total_comment_count"')
+"""What a payload about comments holds: a comment, or a post's comment count."""
 
 
 class LeakError(ValueError):
@@ -280,7 +340,7 @@ class Scrubber:
         path, question, query = path.partition("?")
         stem, dot, extension = path.rpartition(".")
 
-        if "/" in extension or not dot or len(extension) > 5:
+        if extension.lower() not in FILE_EXTENSIONS:
             stem, dot, extension = path, "", ""
 
         stem = self._tokens_in(stem, keep=URL_WORDS, words_too=True)
@@ -305,13 +365,18 @@ class Scrubber:
         )
 
         if holds_words:
-            if len(value) >= LEAK_LENGTH:
+            if len(value) >= LEAK_LENGTH and (
+                lowered in PERSON_KEYS or any(character.isspace() for character in value.strip())
+            ):
                 self.masked.add(value)
 
             return mask(value)
 
         if value.startswith(("http://", "https://")):
             return self._url(value)
+
+        if lowered.endswith(ADDRESS_KEY_ENDINGS):
+            return self._tokens_in(value, keep=URL_WORDS, words_too=True)
 
         hidden = self._base64(value)
 
@@ -344,16 +409,28 @@ class Scrubber:
         if isinstance(value, str):
             return self.string(value, key)
 
+        if (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and value >= 10 ** (ID_DIGITS - 1)
+            and holds_an_id(key)
+        ):
+            return int(self.token(str(value)))
+
         return value
 
     def record(
         self,
         record: dict[str, Any],
+        payloads: list[Any] | None = None,
     ) -> dict[str, Any]:
-        """Return one captured response scrubbed into a fixture record."""
+        """Return one captured response scrubbed into a fixture record.
 
-        body = str(record.get("body") or "")
-        payloads = page_payloads(body) if record.get("kind") == "document" else json_values(body)
+        Its payloads are the JSON its body holds, unless the ones to keep are given.
+        """
+
+        if payloads is None:
+            payloads = payloads_of(record)
 
         return {
             "kind": record.get("kind"),
@@ -366,30 +443,113 @@ class Scrubber:
         }
 
 
+def payloads_of(
+    record: dict[str, Any],
+) -> list[Any]:
+    """Return the JSON one captured response holds: a page's script JSON, or a body's values."""
+
+    body = str(record.get("body") or "")
+
+    return page_payloads(body) if record.get("kind") == "document" else json_values(body)
+
+
+def about_comments(
+    payload: Any,
+) -> bool:
+    """Return whether a payload holds a comment, or a post's comment count."""
+
+    text = json.dumps(payload, ensure_ascii=False)
+
+    return any(marker in text for marker in COMMENT_MARKERS)
+
+
+def string_values(
+    value: Any,
+) -> Iterator[str]:
+    """Yield every string value in a JSON value, never its keys."""
+
+    if isinstance(value, dict):
+        for member in value.values():
+            yield from string_values(member)
+    elif isinstance(value, list):
+        for member in value:
+            yield from string_values(member)
+    elif isinstance(value, str):
+        yield value
+
+
 def leaks(
     scrubber: Scrubber,
-    scrubbed: str,
+    scrubbed: str | Iterable[dict[str, Any]],
 ) -> list[str]:
-    """Return every masked word and replaced ID still in a scrubbed capture."""
+    """Return every masked name or comment and replaced ID still in a scrubbed capture's values.
+
+    Only string values are searched: keys and numbers are structure, kept as
+    they are, and a word that happens to be a key elsewhere has leaked nothing.
+    The words searched for are what people wrote and are called: masked text
+    of more than one word, and names. One-word labels, such as a button's
+    "Friends", and code names, such as Facebook's query names, are no one's.
+    An ID is searched for as a whole token, so a long random replacement that
+    happens to hold its digits is not taken for it.
+    """
+
+    if isinstance(scrubbed, str):
+        values = [scrubbed]
+    else:
+        values = [
+            found
+            for record in scrubbed
+            for part in (record.get("url"), record.get("variables"), record.get("payloads"))
+            for found in string_values(part)
+        ]
+
+    tokens = {token for value in values for token in TOKEN.findall(value)}
+    words = [found for found in scrubber.masked if not IDENTIFIER.match(found)]
+    ids = [
+        found
+        for found in scrubber.replaced
+        if any(character.isdigit() for character in found) and len(set(found)) > 1
+    ]
 
     return sorted(
-        found for found in scrubber.masked | scrubber.replaced if found and found in scrubbed
+        {found for found in words if any(found in value for value in values)}
+        | {found for found in ids if found in tokens}
     )
 
 
 def scrub(
     records: Iterable[dict[str, Any]],
     scrubber: Scrubber | None = None,
+    *,
+    everything: bool = False,
 ) -> Iterator[str]:
     """Return a capture's records scrubbed, as JSON Lines, refusing if anything leaked.
+
+    Only what is about comments is kept: the payloads that hold a comment or a
+    post's comment count, and the responses they came in. A page Facebook loads
+    holds megabytes of everything else, as does a reel viewer's feed of other
+    people's reels. `everything` keeps it all.
 
     Raises:
         LeakError: Something masked or replaced is still in the scrubbed capture.
     """
 
     scrubber = scrubber or Scrubber()
-    lines = [json.dumps(scrubber.record(record), ensure_ascii=False) for record in records]
-    found = leaks(scrubber, "\n".join(lines))
+    scrubbed = []
+
+    for record in records:
+        payloads = payloads_of(record)
+
+        if not everything:
+            payloads = [payload for payload in payloads if about_comments(payload)]
+
+            if not payloads:
+                continue
+
+        scrubbed.append(scrubber.record(record, payloads))
+
+    lines = [json.dumps(record, ensure_ascii=False) for record in scrubbed]
+    found = leaks(scrubber, scrubbed)
 
     if found:
         raise LeakError(
