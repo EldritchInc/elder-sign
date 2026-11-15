@@ -92,6 +92,12 @@ def test_emoji_are_kept_because_they_carry_meaning() -> None:
     assert normalize_text("🤡") != normalize_text("❤️")
 
 
+def test_a_wider_gap_ends_a_spelled_out_word() -> None:
+    assert normalize_text("y o u   w i l l never") == "you will never"
+    assert normalize_text("y o u\nw i l l never") == "you will never"
+    assert normalize_text("y o u w i l l never") == "youwill never"
+
+
 def test_two_single_letters_are_not_joined() -> None:
     assert normalize_text("a b cool") == "a b cool"
 

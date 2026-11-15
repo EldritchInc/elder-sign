@@ -95,6 +95,9 @@ LEET: Final[Mapping[str, str]] = {
 REPEATS: Final = re.compile(r"(.)\1{2,}")
 """Three or more of one character, squeezed to one: `yyyy` and `!!!` but not `oo`."""
 
+PHRASE_BREAK: Final = re.compile(r"\s{2,}|\n")
+"""A wider gap, or a new line, ends a word spelled out letter by letter: `y o u  w i l l`."""
+
 DIGEST_LENGTH: Final = 32
 """How many hex digits of a SHA-256 digest a key keeps: 128 bits."""
 
@@ -161,7 +164,12 @@ def _fold_token(
 def _join_spelled_out(
     tokens: Sequence[str],
 ) -> list[str]:
-    """Join runs of three or more single letters, so `t r a n n y` is one word."""
+    """Join runs of three or more single letters, so `t r a n n y` is one word.
+
+    A run is joined within one phrase: a wider gap ends it, so `y o u  w i l l`
+    is two words. Letters spelled out with single spaces throughout cannot be
+    told apart into words, and are joined into one.
+    """
 
     joined: list[str] = []
     run: list[str] = []
@@ -203,10 +211,13 @@ def normalize_text(
     text = unicodedata.normalize("NFKD", text.casefold())
     text = "".join(character for character in text if unicodedata.category(character) != "Mn")
 
-    tokens = [_fold_token(token) for token in text.split()]
-    tokens = [REPEATS.sub(r"\1", token) for token in tokens if token]
+    words: list[str] = []
 
-    return " ".join(_join_spelled_out(tokens))
+    for phrase in PHRASE_BREAK.split(text.strip()):
+        tokens = [_fold_token(token) for token in phrase.split()]
+        words.extend(_join_spelled_out([REPEATS.sub(r"\1", token) for token in tokens if token]))
+
+    return " ".join(words)
 
 
 def text_key(
