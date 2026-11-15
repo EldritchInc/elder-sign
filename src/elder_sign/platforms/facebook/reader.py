@@ -759,6 +759,49 @@ class PlaywrightBrowser:
 
         return None
 
+    def _button_names_near(
+        self,
+        article: "Locator",
+    ) -> list[str]:
+        """Return the names of the visible buttons in a comment and the two blocks around it."""
+
+        names: list[str] = []
+
+        for scope in (article, article.locator("xpath=.."), article.locator("xpath=../..")):
+            found = scope.get_by_role("button")
+
+            for index in range(min(found.count(), 40)):
+                button = found.nth(index)
+
+                if not button.is_visible():
+                    continue
+
+                label = button.get_attribute("aria-label") or button.inner_text()
+                name = " ".join(label.split())[:40] or "(unnamed)"
+
+                if name not in names:
+                    names.append(name)
+
+        return names
+
+    def _what_is_shown(self) -> str:
+        """Say how many comments the page shows, how many lack a permalink, how many are hidden."""
+
+        shown: dict[str, int] = self._page.evaluate(
+            """() => {
+                const articles = [...document.querySelectorAll('[role=article]')];
+                const linked = articles.filter(a => a.querySelector("a[href*='comment_id=']"));
+                const hidden = articles.filter(a => /This comment was hidden/i.test(a.innerText));
+                return {shown: articles.length, unlinked: articles.length - linked.length,
+                        hidden: hidden.length};
+            }"""
+        )
+
+        return (
+            f"{shown['shown']} comments shown, {shown['unlinked']} without a permalink, "
+            f"{shown['hidden']} reading 'This comment was hidden'"
+        )
+
     @staticmethod
     def _first_visible(
         within: "Locator",
@@ -807,7 +850,7 @@ class PlaywrightBrowser:
         article = self._comment(comment_id)
 
         if article is None:
-            raise ActionError("the comment is not on the page")
+            raise ActionError(f"the comment is not on the page; {self._what_is_shown()}")
 
         article.scroll_into_view_if_needed()
         article.hover()
@@ -828,10 +871,16 @@ class PlaywrightBrowser:
         )
 
         if button is None:
-            if probe and shortcut is not None:
+            nearby = self._button_names_near(article)
+
+            if probe and shortcut is not None and action != "delete":
                 return (f"[button] {' '.join(shortcut.inner_text().split())}",)
 
-            raise ActionError("the comment's menu button was not found")
+            raise ActionError(
+                "the comment's menu button was not found; buttons near it: "
+                + (" / ".join(nearby) or "none"),
+                tuple(nearby),
+            )
 
         button.click()
         self._pacer.pause(0.4)

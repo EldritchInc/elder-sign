@@ -61,6 +61,12 @@ PAGE = f"""<html><body>
 <div role="button" class="menu" aria-label="Edit or delete this">…</div>
 {article("202", "a reply", "/reel/1/?comment_id=102&reply_comment_id=202&__tn__=R")}
 </div>
+<div role="article" id="c104" aria-label="Comment">
+<span class="text">someone else's</span> <a href="/reel/1/?comment_id=104">4h</a>
+<div role="button">Reply</div><div role="button" aria-label="Some new name">…</div>
+</div>
+<div role="article" id="c105" aria-label="Comment">This comment was hidden.
+<div role="button" class="unhide">Unhide</div></div>
 <div role="article" id="c103" aria-label="Comment" data-hidden="1">
 <span class="text">hidden one</span> <a href="/reel/1/?comment_id=103">3h</a>
 <div role="button" class="unhide">Unhide</div>
@@ -149,7 +155,15 @@ def test_hiding_uses_the_button_under_that_comment_alone(
         after = state(page)
 
     assert menu == ("[button] Hide",)
-    assert after == {"c101": "1", "c1012": "0", "c102": "0", "c202": "0", "c103": "1"}
+    assert after == {
+        "c101": "1",
+        "c1012": "0",
+        "c102": "0",
+        "c202": "0",
+        "c104": "0",
+        "c105": "0",
+        "c103": "1",
+    }
 
 
 def test_a_reply_is_found_by_its_own_number_not_its_threads(
@@ -205,3 +219,24 @@ def test_a_comment_not_on_the_page_is_an_error_saying_so(
 ) -> None:
     with opened(tmp_path) as (browser, _), pytest.raises(ActionError, match="not on the page"):
         browser.act(comment_id("999"), "delete")
+
+
+def test_a_menu_button_by_another_name_is_reported_with_every_button_near_the_comment(
+    tmp_path: Path,
+) -> None:
+    with opened(tmp_path) as (browser, _), pytest.raises(ActionError) as raised:
+        browser.act(comment_id("104"), "delete", probe=True)
+
+    assert "menu button was not found" in str(raised.value)
+    assert "Reply" in raised.value.menu
+    assert "Some new name" in raised.value.menu
+
+
+def test_a_comment_not_found_says_what_the_page_shows(
+    tmp_path: Path,
+) -> None:
+    with opened(tmp_path) as (browser, _), pytest.raises(ActionError) as raised:
+        browser.act(comment_id("999"), "unhide")
+
+    assert "1 without a permalink" in str(raised.value)
+    assert "1 reading 'This comment was hidden'" in str(raised.value)
