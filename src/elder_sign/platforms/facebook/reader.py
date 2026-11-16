@@ -498,6 +498,9 @@ MENU_ITEM_SELECTOR: Final = (
 )
 """What counts as an item of a menu Facebook opens: anything in it that can be clicked."""
 
+CLICK_MILLISECONDS: Final = 5000
+"""How long a click waits for its target before the click is sent to it directly."""
+
 HIDDEN_INSTEAD: Final = "(no Delete here: hidden instead)"
 """What an action's menu says when Facebook offers no Delete, and the comment is hidden."""
 
@@ -653,7 +656,7 @@ class PlaywrightBrowser:
         if button is None:
             return
 
-        button.click()
+        self._click(button)
         self._settle()
         self._pacer.pause(0.6)
 
@@ -662,23 +665,36 @@ class PlaywrightBrowser:
         choice: re.Pattern[str],
         stage: Stage,
     ) -> bool:
-        """Choose which comments the reel shows, as `stage`, and say whether that was offered."""
+        """Choose which comments the reel shows, as `stage`, and say whether that was offered.
+
+        A choice that cannot be made, offered or not, closes the menu and is
+        not made: the reel is read as it shows, never left unread.
+        """
+
+        from playwright.sync_api import Error as PlaywrightError
 
         sorting = self._visible("button", SORTING)
 
         if sorting is None:
             return False
 
-        sorting.click()
-        self._pacer.pause(0.5)
-        option = self._visible("menuitem", choice)
+        try:
+            self._click(sorting)
+            self._pacer.pause(0.5)
+            option = self._visible("menuitem", choice)
 
-        if option is None:
-            self._page.keyboard.press("Escape")
+            if option is None:
+                self._page.keyboard.press("Escape")
+                return False
+
+            self._stage = stage
+            self._click(option)
+        except PlaywrightError:
+            with suppress(PlaywrightError):
+                self._page.keyboard.press("Escape")
+
             return False
 
-        self._stage = stage
-        option.click()
         self._settle()
         self._pacer.pause(0.5)
 
@@ -704,7 +720,7 @@ class PlaywrightBrowser:
 
             text = button.inner_text()
             before = len(self._recorder.records)
-            button.click()
+            self._click(button)
             self._settle()
             self._pacer.pause(0.6)
 
@@ -840,6 +856,24 @@ class PlaywrightBrowser:
         )
 
     @staticmethod
+    def _click(
+        target: "Locator",
+    ) -> None:
+        """Click something as a person would, or, when Facebook lays something over it, directly.
+
+        Facebook's panels sometimes draw comments over an open menu, so a menu
+        item that is visible cannot be reached by the pointer. After
+        `CLICK_MILLISECONDS` the click is sent to the element itself.
+        """
+
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+        try:
+            target.click(timeout=CLICK_MILLISECONDS)
+        except PlaywrightTimeoutError:
+            target.dispatch_event("click")
+
+    @staticmethod
     def _first_visible(
         within: "Locator",
         name: re.Pattern[str],
@@ -946,7 +980,7 @@ class PlaywrightBrowser:
         )
 
         if shortcut is not None and not probe:
-            shortcut.click()
+            self._click(shortcut)
             self._settle()
             self._pacer.pause(0.6)
 
@@ -969,7 +1003,7 @@ class PlaywrightBrowser:
                 tuple(nearby),
             )
 
-        button.click()
+        self._click(button)
         self._pacer.pause(0.4)
         items = self._menu_items()
         menu = tuple(f"{name} [{role}]" if probe else name for name, role, _ in items)
@@ -988,7 +1022,7 @@ class PlaywrightBrowser:
                 if probe:
                     self._page.keyboard.press("Escape")
                 else:
-                    instead.click()
+                    self._click(instead)
                     self._settle()
                     self._pacer.pause(0.6)
 
@@ -1005,7 +1039,7 @@ class PlaywrightBrowser:
 
             return menu
 
-        item.click()
+        self._click(item)
         self._pacer.pause(0.4)
 
         if action == "delete":
@@ -1015,7 +1049,7 @@ class PlaywrightBrowser:
                 confirm.first.wait_for(state="visible", timeout=CONFIRM_MILLISECONDS)
 
             if confirm.count() and confirm.first.is_visible():
-                confirm.first.click()
+                self._click(confirm.first)
 
         self._settle()
         self._pacer.pause(0.6)

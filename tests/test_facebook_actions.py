@@ -99,6 +99,11 @@ PAGE = f"""<html><body>
 <span class="text">becomes a placeholder</span> <a href="/reel/1/?comment_id=112">11h</a>
 <div role="button" class="vanish">Hide</div>
 </div>
+<div role="article" id="c113" aria-label="Comment" style="position: relative">
+<span class="text">covered</span> <a href="/reel/1/?comment_id=113">12h</a>
+<div role="button" class="hide">Hide</div>
+<div style="position: absolute; inset: 0; background: transparent">a comment drawn over it</div>
+</div>
 <div role="menu" id="menu" hidden>
 <div role="menuitem" id="delete">Delete</div>
 <div role="menuitem" id="hidecomment">Hide comment</div>
@@ -232,6 +237,7 @@ def test_hiding_uses_the_button_under_that_comment_alone(
         "c110": "0",
         "c111": "1",
         "c112": "0",
+        "c113": "0",
         "c103": "1",
     }
 
@@ -426,3 +432,14 @@ def test_whatever_the_browser_fails_at_is_the_comments_failure_never_the_runs(
 
         with pytest.raises(ActionError, match="the browser failed while acting on the comment"):
             browser.act(comment_id("101"), "hide")
+
+
+def test_a_button_facebook_draws_something_over_is_still_clicked(
+    tmp_path: Path,
+) -> None:
+    with opened(tmp_path) as (browser, page):
+        menu = browser.act(comment_id("113"), "hide")
+        after = state(page)
+
+    assert menu == ("[button] Hide",)
+    assert after["c113"] == "1"
