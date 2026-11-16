@@ -10,11 +10,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
-from elder_sign import audit, judging, planning, scrub
+from elder_sign import audit, judging, moderating, planning, scrub
 from elder_sign import canary as canaries
 from elder_sign import review as reviewing
 from elder_sign.browser import BrowserError, BrowserSettings, profile_path
-from elder_sign.platforms import Post
+from elder_sign.platforms import Post, Scan
 from elder_sign.platforms.facebook import capture as facebook_capture
 from elder_sign.platforms.facebook import reader as facebook_reader
 from elder_sign.platforms.facebook import session as facebook_session
@@ -315,28 +315,7 @@ def _judge(
         Path(options.out) if options.out else scans_path() / f"facebook-{reel_id}-verdicts.json"
     )
     planned = planning.plan(scan, judgment.outcome, now=datetime.now(UTC))
-    report = {
-        "scan": scan,
-        "outcome": judgment.outcome,
-        "described": judgment.described,
-        "undescribed_media": list(judgment.undescribed),
-        "held": list(judgment.held),
-        "plan": {
-            "actions": [
-                {
-                    "comment_id": action.comment_id,
-                    "action": action.action,
-                    "layer": action.layer,
-                    "dry_run": action.dry_run,
-                }
-                for action in planned.actions
-            ],
-            "left": list(planned.left),
-            "waiting": list(planned.waiting),
-            "deferred": list(planned.deferred),
-        },
-    }
-    write_private(output, json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+    keep_report(output, scan, judgment, planned)
 
     counts = judgment.counts()
     model = judgment.outcome.get("model", {})
@@ -369,6 +348,145 @@ def _judge(
     print(f"Kept in {output}, readable by you alone. Nothing on Facebook was changed.")
 
     return 0
+
+
+def keep_report(
+    path: Path,
+    scan: Scan,
+    judgment: judging.Judgment,
+    planned: planning.Plan,
+) -> None:
+    """Keep what one post's judging found and planned, readable by her alone, for review."""
+
+    report = {
+        "scan": scan,
+        "outcome": judgment.outcome,
+        "described": judgment.described,
+        "undescribed_media": list(judgment.undescribed),
+        "held": list(judgment.held),
+        "plan": {
+            "actions": [
+                {
+                    "comment_id": action.comment_id,
+                    "action": action.action,
+                    "layer": action.layer,
+                    "dry_run": action.dry_run,
+                }
+                for action in planned.actions
+            ],
+            "left": list(planned.left),
+            "waiting": list(planned.waiting),
+            "deferred": list(planned.deferred),
+        },
+    }
+    write_private(path, json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+
+
+def _moderate(
+    options: argparse.Namespace,
+    *,
+    runner: judging.Runner | None = None,
+) -> int:
+    """Moderate one reel, or every recent one: a dry run unless told to apply."""
+
+    post = None
+
+    if options.url:
+        found = REEL_PATH.search(options.url)
+
+        if found is None:
+            print(f"{options.url} is not a link to a reel.", file=sys.stderr)
+            return 1
+
+        reel_id = found.group(1)
+        post = Post(
+            platform="facebook",
+            post_id=reel_id,
+            url=facebook_reader.REEL_URL.format(reel_id=reel_id),
+        )
+
+    os.environ.setdefault(store.DATABASE_ENVIRONMENT_VARIABLE, str(store.database_path()))
+    settings = moderating.ModerationSettings(
+        apply=options.apply, apply_unhide=options.apply_unhide, delete=not options.hide_only
+    )
+    connection = store.connect()
+
+    try:
+        canaries.ensure_unfrozen(connection, "facebook")
+
+        with facebook_reader.facebook(_settings(options)) as platform:
+            posts = [post] if post is not None else list(platform.recent_posts(options.days))
+
+            for each in posts:
+                moderation = moderating.moderate(
+                    connection,
+                    platform,
+                    each,
+                    runner or judging.AzathothRunner(),
+                    now=datetime.now(UTC),
+                    settings=settings,
+                    force=options.force,
+                )
+                _say_moderated(moderation, settings)
+    except canaries.FrozenError as exc:
+        print(exc, file=sys.stderr)
+        return FROZEN_EXIT
+    except (BrowserError, judging.WorkflowError) as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    finally:
+        connection.close()
+
+    if not settings.apply:
+        print("Nothing on Facebook was changed: add --apply to act.")
+
+    return 0
+
+
+def _say_moderated(
+    moderation: moderating.Moderation,
+    settings: moderating.ModerationSettings,
+) -> None:
+    """Say what moderating one reel did, and keep its report for review."""
+
+    reel_id = moderation.post.post_id
+
+    if moderation.skipped:
+        print(f"Reel {reel_id}: unchanged since it was last clean.")
+        return
+
+    if moderation.scan is None or moderation.judgment is None or moderation.plan is None:
+        return
+
+    keep_report(
+        scans_path() / f"facebook-{reel_id}-verdicts.json",
+        moderation.scan,
+        moderation.judgment,
+        moderation.plan,
+    )
+    planned = moderation.plan.counts()
+    left = (
+        f"{planned['left']} uncertain left for you, {planned['waiting']} too new to act on, "
+        f"{planned['deferred']} over this run's caps"
+    )
+
+    if not settings.apply:
+        print(
+            f"Reel {reel_id}: dry run: would delete {planned['delete']}, hide {planned['hide']}, "
+            f"unhide {planned['unhide']}; {left}."
+        )
+        return
+
+    done = moderation.counts()
+    print(
+        f"Reel {reel_id}: deleted {done['deleted']}, hid {done['hidden']}, "
+        f"unhid {done['unhidden']}, failed {done['failed']}, {done['dry_run']} only dry run; "
+        f"{left}." + (" Clean." if moderation.clean else "")
+    )
+
+    for action, status, detail in moderation.acted:
+        if status == "failed":
+            print(f"  failed to {action.action} comment …{action.comment_id[-10:]}: {detail}")
 
 
 def _review(
@@ -752,6 +870,35 @@ def build_parser() -> argparse.ArgumentParser:
         "--hidden", action="store_true", help="Keep the browser window hidden."
     )
 
+    moderating_command = commands.add_parser(
+        "moderate",
+        help="Judge, plan and act on one reel or every recent one: a dry run unless --apply.",
+    )
+    moderating_command.add_argument("platform", choices=PLATFORMS)
+    moderating_command.add_argument(
+        "url", nargs="?", help="One reel's link; else every recent one."
+    )
+    moderating_command.add_argument(
+        "--days", type=int, default=30, help="How far back to look for reels."
+    )
+    moderating_command.add_argument(
+        "--apply", action="store_true", help="Act: delete and hide, not only say what would be."
+    )
+    moderating_command.add_argument(
+        "--apply-unhide",
+        action="store_true",
+        help="Also unhide for real what a filter hid that is friendly.",
+    )
+    moderating_command.add_argument(
+        "--hide-only", action="store_true", help="Hide what would be deleted; delete nothing."
+    )
+    moderating_command.add_argument(
+        "--force", action="store_true", help="Look again at reels unchanged since they were clean."
+    )
+    moderating_command.add_argument(
+        "--hidden", action="store_true", help="Keep the browser window hidden."
+    )
+
     reviewing_command = commands.add_parser(
         "review",
         help="Decide, one at a time, what the last judge of a reel left open; kept for good.",
@@ -854,6 +1001,9 @@ def main(
 
     if options.command == "judge":
         return _judge(options)
+
+    if options.command == "moderate":
+        return _moderate(options)
 
     if options.command == "probe":
         return _probe(options)
