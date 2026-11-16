@@ -903,11 +903,33 @@ class PlaywrightBrowser:
         """Do one action to one comment shown, paced, and return what its menu offered.
 
         With `probe`, the menu is opened, read and closed, and nothing in it
-        is clicked.
+        is clicked. Whatever the browser fails at is this comment's failure,
+        never the run's: Facebook changes the page under every click.
 
         Raises:
-            ActionError: The comment, its menu, or the menu's item was not found.
+            ActionError: The comment, its menu, or the menu's item was not found, or the
+                browser failed while acting on it.
         """
+
+        from playwright.sync_api import Error as PlaywrightError
+
+        try:
+            return self._act(comment_id, action, probe=probe)
+        except PlaywrightError as exc:
+            with suppress(PlaywrightError):
+                self._page.keyboard.press("Escape")
+
+            (first, *_) = str(exc).splitlines() or ["no reason given"]
+            raise ActionError(f"the browser failed while acting on the comment: {first}") from exc
+
+    def _act(
+        self,
+        comment_id: str,
+        action: str,
+        *,
+        probe: bool,
+    ) -> tuple[str, ...]:
+        """Do one action to one comment shown, as `act` says, letting the browser's errors out."""
 
         article = self._comment(comment_id)
 
@@ -919,13 +941,16 @@ class PlaywrightBrowser:
         self._pacer.pause(0.3)
         direct = DIRECT.get(action)
         shortcut = None if direct is None else self._first_visible(article, direct)
+        pressed = (
+            None if shortcut is None else f"[button] {' '.join(shortcut.inner_text().split())}"
+        )
 
         if shortcut is not None and not probe:
             shortcut.click()
             self._settle()
             self._pacer.pause(0.6)
 
-            return (f"[button] {' '.join(shortcut.inner_text().split())}",)
+            return (str(pressed),)
 
         buttons = article.get_by_role("button", name=COMMENT_MENU)
         button = next(
@@ -936,7 +961,7 @@ class PlaywrightBrowser:
             nearby = self._button_names_near(article)
 
             if probe and shortcut is not None and action != "delete":
-                return (f"[button] {' '.join(shortcut.inner_text().split())}",)
+                return (str(pressed),)
 
             raise ActionError(
                 "the comment's menu button was not found; buttons near it: "
@@ -950,7 +975,7 @@ class PlaywrightBrowser:
         menu = tuple(f"{name} [{role}]" if probe else name for name, role, _ in items)
 
         if shortcut is not None:
-            menu = (f"[button] {' '.join(shortcut.inner_text().split())}", *menu)
+            menu = (str(pressed), *menu)
         wanted = MENU_ITEMS.get(action)
         item = next((found for name, _, found in items if wanted and wanted.match(name)), None)
 

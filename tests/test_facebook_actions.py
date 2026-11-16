@@ -95,6 +95,10 @@ PAGE = f"""<html><body>
 <div role="article" id="c109" aria-label="Comment">This comment was hidden.
 <a href="/reel/1/?comment_id={ENCODED_109}">8h</a>
 <div role="button" class="unhide">Unhide</div></div>
+<div role="article" id="c112" aria-label="Comment">
+<span class="text">becomes a placeholder</span> <a href="/reel/1/?comment_id=112">11h</a>
+<div role="button" class="vanish">Hide</div>
+</div>
 <div role="menu" id="menu" hidden>
 <div role="menuitem" id="delete">Delete</div>
 <div role="menuitem" id="hidecomment">Hide comment</div>
@@ -133,6 +137,10 @@ document.querySelectorAll('.unhide').forEach(button => button.onclick = event =>
   event.stopPropagation(); button.closest('[role=article]').dataset.hidden = '0'; }});
 document.addEventListener('keydown', event => {{
   if (event.key === 'Escape') menu.hidden = true; }});
+document.querySelectorAll('.vanish').forEach(button => button.onclick = event => {{
+  event.stopPropagation(); const article = button.closest('[role=article]');
+  article.dataset.hidden = '1';
+  article.innerHTML = 'This comment was hidden. <div role="button">Unhide</div>'; }});
 const realmenu = document.getElementById('realmenu');
 document.querySelectorAll('.realmenu').forEach(button => button.onclick = event => {{
   event.stopPropagation(); target = button.closest('[role=article]'); realmenu.hidden = false; }});
@@ -223,6 +231,7 @@ def test_hiding_uses_the_button_under_that_comment_alone(
         "c109": "0",
         "c110": "0",
         "c111": "1",
+        "c112": "0",
         "c103": "1",
     }
 
@@ -389,3 +398,31 @@ def test_no_other_button_is_taken_for_a_comments_menu(
     from elder_sign.platforms.facebook.reader import COMMENT_MENU
 
     assert not COMMENT_MENU.match(name)
+
+
+def test_hiding_a_comment_facebook_then_swaps_for_a_placeholder_returns_at_once(
+    tmp_path: Path,
+) -> None:
+    with opened(tmp_path) as (browser, page):
+        page.set_default_timeout(3000)
+        menu = browser.act(comment_id("112"), "hide")
+        after = state(page)
+
+    assert menu == ("[button] Hide",)
+    assert after["c112"] == "1"
+
+
+def test_whatever_the_browser_fails_at_is_the_comments_failure_never_the_runs(
+    tmp_path: Path,
+) -> None:
+    with opened(tmp_path) as (browser, page):
+
+        def breaks(*arguments: Any, **options: Any) -> tuple[str, ...]:
+            from playwright.sync_api import Error
+
+            raise Error("Locator.inner_text: Timeout 30000ms exceeded.\nCall log: …")
+
+        browser._act = breaks  # type: ignore[method-assign]
+
+        with pytest.raises(ActionError, match="the browser failed while acting on the comment"):
+            browser.act(comment_id("101"), "hide")
